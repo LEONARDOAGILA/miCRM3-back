@@ -1,0 +1,118 @@
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              ARQUITECTURA ERP - 3 CAPAS                             │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐│
+│  │                           FRONTEND (ANGULAR 20)                                 ││
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              ││
+│  │  │  Módulos    │ │  Signals    │ │  Servicios  │ │  Guards     │              ││
+│  │  │  Standalone │ │  Estado     │ │  HTTP       │ │  Auth       │              ││
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘              ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘│
+│                                              │                                       │
+│                                              │ HTTPS / JWT                          │
+│                                              ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐│
+│  │                           BACKEND (LARAVEL 10)                                  ││
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐              ││
+│  │  │  Routes     │ │  Middleware │ │  Controllers│ │  Requests   │              ││
+│  │  │  API        │ │  Auth/CORS  │ │  (Orquest.) │ │  Validation │              ││
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘              ││
+│  │                                                                                 ││
+│  │  Funciones: Validación, Autenticación, Notificaciones, Cache, PDFs             ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘│
+│                                              │                                       │
+│                                              │ SQL / PG Functions                   │
+│                                              ▼                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐│
+│  │                      BASE DE DATOS (POSTGRESQL 18)                             ││
+│  │                                                                                 ││
+│  │  ┌─────────────────────────────────────────────────────────────────────────┐   ││
+│  │  │                      LÓGICA DE NEGOCIO (PL/pgSQL)                        │   ││
+│  │  │  • CRUDs completos en funciones                                          │   ││
+│  │  │  • Validaciones de negocio                                               │   ││
+│  │  │  • Cálculos (impuestos, totales)                                         │   ││
+│  │  │  • Control de concurrencia (SELECT FOR UPDATE, SERIALIZABLE)             │   ││
+│  │  └─────────────────────────────────────────────────────────────────────────┘   ││
+│  │                                                                                 ││
+│  │  ┌─────────────────────────────────────────────────────────────────────────┐   ││
+│  │  │                      AUDITORÍA (PARTICIONADA)                            │   ││
+│  │  │  • logs_cambios (JSONB completo)                                         │   ││
+│  │  │  • Particionamiento por mes                                              │   ││
+│  │  │  • Contexto: usuario, IP, user_agent, request_id                         │   ││
+│  │  │  • Triggers automáticos                                                  │   ││
+│  │  └─────────────────────────────────────────────────────────────────────────┘   ││
+│  │                                                                                 ││
+│  │  ┌─────────────────────────────────────────────────────────────────────────┐   ││
+│  │  │                      ESQUEMAS (Organización)                             │   ││
+│  │  │  • core     → Empresa, sucursales, almacenes, puntos_venta              │   ││
+│  │  │  • seguridad→ Usuarios, perfiles, permisos, sesiones                    │   ││
+│  │  │  • cliente  → Clientes, contactos, direcciones, créditos                │   ││
+│  │  │  • producto → Productos, categorías, precios, impuestos                 │   ││
+│  │  │  • proveedor→ Proveedores, contactos                                    │   ││
+│  │  │  • rh       → Empleados, cargos, departamentos, nómina                  │   ││
+│  │  │  • venta    → Facturas, pedidos, cotizaciones, notas crédito            │   ││
+│  │  │  • compra   → Órdenes compra, recepciones, facturas compra              │   ││
+│  │  │  • inventario→ Stock, movimientos, kardex, ajustes                      │   ││
+│  │  │  • contabilidad→ Plan cuentas, asientos, periodos                       │   ││
+│  │  │  • cartera  → Cuentas por cobrar/pagar                                  │   ││
+│  │  │  • tesoreria→ Bancos, cuentas, movimientos                              │   ││
+│  │  │  • activo_fijo→ Activos, depreciaciones                                 │   ││
+│  │  │  • auditoria→ logs_cambios (particionada)                               │   ││
+│  │  │  • reportes→ Vistas materializadas para Power BI                       │   ││
+│  │  │  • temporal → Tablas para importaciones/ETL                             │   ││
+│  │  └─────────────────────────────────────────────────────────────────────────┘   ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+📋 6. CONVENCIONES DE NOMBRES
+
+SCHEMAS:
+  - Singular (core, seguridad, cliente, producto, rh, venta, etc)
+
+TABLAS:
+  - Plural (clientes, productos, facturas, empleados, departamentos)
+
+CAMPOS:
+  - Singular (id, nombre, codigo, created_at, updated_at)
+
+LLAVES FORÁNEAS:
+  - [tabla_singular]_id (cliente_id, producto_id, empleado_id)
+
+CONSTRAINTS:
+  - pk_[tabla]           → pk_departamentos
+  - fk_[tabla]_[ref]     → fk_facturas_cliente
+  - uk_[tabla]_[campo]   → uk_clientes_email
+  - ck_[tabla]_[regla]   → ck_empleados_edad
+
+ÍNDICES:
+  - idx_[tabla]_[campo]  → idx_clientes_email
+
+FUNCIONES CRUD:
+  - [schema].[operacion]_[tabla] → rh.crear_departamento()
+
+
+
+
+
+
+📊 MONITOREO
+
+-- Ver tamaño de tablas
+SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
+FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+
+-- Ver particiones de auditoría
+SELECT auditoria.listar_particiones();
+
+-- Ver estadísticas de particiones
+SELECT auditoria.estadisticas_particiones();
+
+-- Ver conexiones activas
+SELECT pid, usename, application_name, client_addr, state, query
+FROM pg_stat_activity WHERE state = 'active';
