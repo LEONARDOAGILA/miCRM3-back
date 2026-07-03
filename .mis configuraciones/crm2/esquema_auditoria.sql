@@ -72,6 +72,7 @@ ALTER FUNCTION auditoria.fn_set_audit_users() OWNER TO postgres;
 
 
 -- TABLA DE AUDITORIA: logs_cambios (PARTICIONADA)
+-- TABLA DE AUDITORIA: logs_cambios (PARTICIONADA)
 CREATE TABLE auditoria.logs_cambios (
     id BIGSERIAL,
     schema_nombre VARCHAR(50) NOT NULL,
@@ -90,17 +91,23 @@ CREATE TABLE auditoria.logs_cambios (
     fecha_operacion TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, fecha_operacion)
 ) PARTITION BY RANGE (fecha_operacion);
--- Crear particiones para los próximos meses
+
+-- =============================================
+-- CREAR PARTICIONES DESDE JUNIO 2026 HASTA DICIEMBRE 2040
+-- =============================================
 DO $$
 DECLARE
     v_start_date DATE;
     v_end_date DATE;
     v_partition_name TEXT;
-    v_current_date DATE := date_trunc('month', CURRENT_DATE);
+    v_current_date DATE := date_trunc('month', CURRENT_DATE); -- Junio 2026
+    v_end_date_limit DATE := '2040-12-01'::DATE;
+    v_counter INTEGER := 0;
 BEGIN
-    -- Crear particiones para 12 meses (6 pasados y 6 futuros)
-    FOR i IN -6..6 LOOP
-        v_start_date := v_current_date + (i || ' months')::INTERVAL;
+    RAISE NOTICE 'Creando particiones desde % hasta %', v_current_date, v_end_date_limit;
+    
+    WHILE v_current_date <= v_end_date_limit LOOP
+        v_start_date := v_current_date;
         v_end_date := v_start_date + INTERVAL '1 month';
         v_partition_name := 'logs_cambios_' || to_char(v_start_date, 'YYYY_MM');
         
@@ -111,15 +118,25 @@ BEGIN
             v_start_date,
             v_end_date
         );
+        
+        v_counter := v_counter + 1;
+        v_current_date := v_current_date + INTERVAL '1 month';
     END LOOP;
+    
+    RAISE NOTICE '✅ Creadas % particiones exitosamente', v_counter;
 END;
 $$;
--- Índices (se aplican a todas las particiones)
+
+-- =============================================
+-- ÍNDICES (se aplican a todas las particiones)
+-- =============================================
 CREATE INDEX idx_logs_cambios_registro ON auditoria.logs_cambios(schema_nombre, tabla_nombre, registro_id);
 CREATE INDEX idx_logs_cambios_tabla_registro ON auditoria.logs_cambios(tabla_nombre, registro_id);
 CREATE INDEX idx_logs_cambios_usuario ON auditoria.logs_cambios(usuario_id);
 CREATE INDEX idx_logs_cambios_usuario_login ON auditoria.logs_cambios(usuario_login);
 CREATE INDEX idx_logs_cambios_fecha_brin ON auditoria.logs_cambios USING BRIN (fecha_operacion);
+
+
 
 
 
