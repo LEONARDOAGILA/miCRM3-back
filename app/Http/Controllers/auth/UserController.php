@@ -857,6 +857,105 @@ public function verificarUsuarioRecuperacion(Request $request)
 /**
  * Solicitar recuperación - Genera código y lo envía al correo
  */
+// public function solicitarRecuperacion(Request $request)
+// {
+//     try {
+//         $validator = Validator::make($request->all(), [
+//             'login_user' => 'required|string|max:100'
+//         ]);
+
+//         if ($validator->fails()) {
+//             return $this->errorResponse($validator->errors()->first(), 422);
+//         }
+
+//         $login_user = $request->login_user;
+        
+//         // Llamar a la función de PostgreSQL
+//         $result = DB::selectOne('
+//             SELECT seguridad.fn_usuarios_solicitar_recuperacion(
+//                 ?::VARCHAR,
+//                 ?::INET,
+//                 ?::TEXT,
+//                 ?::UUID
+//             ) as result
+//         ', [
+//             $login_user,
+//             $request->ip(),
+//             $request->userAgent(),
+//             (string) Str::uuid()
+//         ]);
+        
+//         $resultado = json_decode($result->result, true);
+        
+//         if (!$resultado['success']) {
+//             return $this->errorResponse($resultado['message'], 400, $resultado['error_code'] ?? null);
+//         }
+        
+//         $data = $resultado['data'];
+        
+//         // Enviar correo con el código
+//         try {
+//             $emailController = new EmailController();
+            
+//             $object = (object) [
+//                 'name' => $data['name'],
+//                 'login_user' => $data['login_user'],
+//                 'email' => $data['email'],
+//                 'codigo' => $data['codigo'],
+//                 'expira' => $data['expira_en'],
+//                 'fecha' => now()->format('d/m/Y H:i:s')
+//             ];
+            
+//             $attachments = [];
+//             $logoPath = public_path('storage/img/mail/mail.png');
+//             if (file_exists($logoPath)) {
+//                 $attachments[] = [
+//                     'path' => $logoPath,
+//                     'as' => 'logo.png',
+//                     'mime' => 'image/png'
+//                 ];
+//             }
+            
+//             $emailController->send_email(
+//                 $data['email'],
+//                 $object,
+//                 '🔐 Código de Recuperación - ' . env('APP_NAME'),
+//                 'mail.password-recovery-code',
+//                 $attachments
+//             );
+            
+//             sistemaLog('info', 'Código de recuperación enviado', [
+//                 'usuario_id' => $data['id'],
+//                 'email' => $data['email'],
+//                 'ip' => $request->ip()
+//             ]);
+            
+//             // No devolvemos el código en la respuesta por seguridad
+//             return $this->successResponse([
+//                 'email' => $data['email']
+//             ], 'Código enviado a tu correo electrónico');
+            
+//         } catch (Exception $e) {
+//             sistemaLog('error', 'Error al enviar correo de recuperación', [
+//                 'message' => $e->getMessage(),
+//                 'usuario_id' => $data['id']
+//             ]);
+//             return $this->errorResponse('Error al enviar el correo: ' . $e->getMessage(), 500);
+//         }
+        
+//     } catch (Exception $e) {
+//         sistemaLog('error', 'Error en solicitarRecuperacion', [
+//             'code' => $e->getCode(),
+//             'message' => $e->getMessage(),
+//             'line' => $e->getLine()
+//         ]);
+//         return $this->errorResponse($e->getMessage(), 500);
+//     }
+// }
+
+/**
+ * Solicitar recuperación - Genera código y lo envía al correo
+ */
 public function solicitarRecuperacion(Request $request)
 {
     try {
@@ -870,16 +969,33 @@ public function solicitarRecuperacion(Request $request)
 
         $login_user = $request->login_user;
         
-        // Llamar a la función de PostgreSQL
+        // Obtener datos del usuario ANTES de llamar a la función
+        $user = DB::selectOne('
+            SELECT id, login_user, name, email
+            FROM seguridad.users 
+            WHERE login_user = ? AND isactive = true
+        ', [$login_user]);
+        
+        if (!$user) {
+            return $this->errorResponse('Usuario no encontrado o inactivo', 404);
+        }
+        
+        // Llamar a la función de PostgreSQL con los datos del usuario
         $result = DB::selectOne('
             SELECT seguridad.fn_usuarios_solicitar_recuperacion(
-                ?::VARCHAR,
-                ?::INET,
-                ?::TEXT,
-                ?::UUID
+                ?::VARCHAR,   -- p_login_user
+                ?::BIGINT,    -- p_usuario_id (el ID del usuario que solicita)
+                ?::VARCHAR,   -- p_usuario_login (el login del usuario)
+                ?::VARCHAR,   -- p_usuario_nombre (el nombre del usuario)
+                ?::INET,      -- p_ip_address
+                ?::TEXT,      -- p_user_agent
+                ?::UUID       -- p_request_id
             ) as result
         ', [
             $login_user,
+            $user->id,                    // p_usuario_id
+            $user->login_user,            // p_usuario_login
+            $user->name,                  // p_usuario_nombre
             $request->ip(),
             $request->userAgent(),
             (string) Str::uuid()
@@ -952,6 +1068,9 @@ public function solicitarRecuperacion(Request $request)
         return $this->errorResponse($e->getMessage(), 500);
     }
 }
+
+
+
 
 /**
  * Verificar código de recuperación
