@@ -140,7 +140,7 @@ class AuthController extends Controller
             [$login_user]
         );
 
-        // 3. VALIDACIONES
+        // 3. VALIDACIONESssssssssssssss
         if (!$user) {
             usleep(rand(200000, 500000));
             return $this->errorResponse('Credenciales inválidas', 401);
