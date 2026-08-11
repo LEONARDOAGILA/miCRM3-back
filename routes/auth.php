@@ -23,7 +23,6 @@ Route::group([
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('/refresh', [AuthController::class, 'refresh'])->name('refresh');
     Route::post('/me', [AuthController::class, 'me'])->name('me');
-
    
     // LPAA - CONTROL DE SESIONES ACTIVAS - RUTAS
     Route::get('/my-sessions', [AuthController::class, 'getMySessions']);
