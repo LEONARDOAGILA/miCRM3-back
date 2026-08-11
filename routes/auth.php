@@ -25,7 +25,7 @@ Route::group([
     Route::post('/me', [AuthController::class, 'me'])->name('me');
 
 
-    // LPAA - CONTROL DE SESIONES ACTIVAS - RUTAS....3
+    // LPAA - CONTROL DE SESIONES ACTIVAS - RUTAS....6
     Route::get('/my-sessions', [AuthController::class, 'getMySessions']);
     Route::delete('/close-session/{id}', [AuthController::class, 'closeSession']);
     Route::post('/logout-all-others', [AuthController::class, 'logoutAllOtherSessions']);
