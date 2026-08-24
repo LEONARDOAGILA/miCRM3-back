@@ -18,7 +18,7 @@ class AuthController extends Controller
 {
     use ApiResponder;
 
-    private $maxSesionesPorUsuario = 4; // Máximo de sesiones simultáneas
+    private $maxSesionesPorUsuario = 44; // Máximo de sesiones simultáneas
 
     public function __construct()
     {
