@@ -384,117 +384,137 @@ class UserController extends Controller
         }
     }
     
-    public function addImagen(Request $request)
-    {
-        DB::beginTransaction();
-        
-        try {
-            $validator = Validator::make($request->all(), [
-                'UserId' => 'required|integer',
-            ]);
+public function addImagen(Request $request)
+{
+    DB::beginTransaction();
+    
+    try {
+        $validator = Validator::make($request->all(), [
+            'UserId' => 'required|integer',
+        ]);
 
-            if ($validator->fails()) {
-                DB::rollBack();
-                return $this->errorResponse($validator->errors()->first(), 422);
-            }
-
-            $userId = (int) $request->UserId;
-            
-            // Verificar que el usuario existe
-            $userExists = DB::selectOne('SELECT id FROM seguridad.users WHERE id = ?', [$userId]);
-            
-            if (!$userExists) {
-                DB::rollBack();
-                return $this->errorResponse('Usuario no encontrado', 404);
-            }
-
-            if (!$request->hasFile('imagen_file')) {
-                DB::rollBack();
-                return $this->errorResponse('No se encontró la imagen para guardar', 400);
-            }
-
-            // Obtener avatar anterior
-            $avatarAnterior = DB::selectOne('SELECT avatar FROM seguridad.users WHERE id = ?', [$userId]);
-
-            $file = $request->file('imagen_file');
-            $extension = $file->getClientOriginalExtension();
-            $filename = $userId . '_userimg.' . $extension;
-            
-            // Guardar imagen
-            $file->storeAs('public/img/users', $filename);
-            
-            $usuario = auth('api')->user();
-            $usuarioId = $usuario->id ?? null;
-            $usuarioLogin = $usuario->login_user ?? null;
-            $usuarioNombre = trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null;
-            
-            // ✅ Llamada corregida
-            $result = DB::selectOne("
-                SELECT seguridad.fn_usuarios_imagen(
-                    ?::BIGINT, 
-                    ?::VARCHAR, 
-                    ?::BIGINT, 
-                    ?::VARCHAR, 
-                    ?::VARCHAR, 
-                    ?::INET, 
-                    ?::TEXT, 
-                    ?::UUID
-                ) as result
-            ", [
-                $userId,
-                $filename,
-                $usuarioId,
-                $usuarioLogin,
-                $usuarioNombre,
-                $request->ip(),
-                $request->userAgent(),
-                (string) Str::uuid()
-            ]);
-            
-            $resultado = json_decode($result->result, true);
-            
-            if ($resultado['success']) {
-                // Eliminar avatar anterior
-                if ($avatarAnterior && $avatarAnterior->avatar) {
-                    $oldImagePath = storage_path('app/public/img/users/' . $avatarAnterior->avatar);
-                    if (file_exists($oldImagePath)) {
-                        unlink($oldImagePath);
-                    }
-                }
-                
-                DB::commit();
-                
-                sistemaLog('info', 'Imagen guardada exitosamente', [
-                    'user_id' => $userId,
-                    'avatar' => $filename,
-                    'usuario' => $usuarioLogin ?? 'desconocido'
-                ]);
-                
-                return $this->successResponse([
-                    'avatar' => $resultado['data']['avatar'],
-                    'full_path' => asset('storage/img/users/' . $resultado['data']['avatar'])
-                ], $resultado['message']);
-            } else {
-                // Eliminar imagen guardada si la BD falló
-                $newImagePath = storage_path('app/public/img/users/' . $filename);
-                if (file_exists($newImagePath)) {
-                    unlink($newImagePath);
-                }
-                DB::rollBack();
-                return $this->errorResponse($resultado['message'], 400);
-            }
-            
-        } catch (Exception $e) {
+        if ($validator->fails()) {
             DB::rollBack();
-            sistemaLog('error', 'Error en addImagen', [
-                'code' => $e->getCode(),
-                'message' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'user_id' => $request->UserId ?? null
-            ]);
-            return $this->errorResponse($e->getMessage(), 500);
+            return $this->errorResponse($validator->errors()->first(), 422);
         }
+
+        $userId = (int) $request->UserId;
+        
+        // Verificar que el usuario existe
+        $userExists = DB::selectOne('SELECT id, avatar FROM seguridad.users WHERE id = ?', [$userId]);
+        
+        if (!$userExists) {
+            DB::rollBack();
+            return $this->errorResponse('Usuario no encontrado', 404);
+        }
+
+        if (!$request->hasFile('imagen_file')) {
+            DB::rollBack();
+            return $this->errorResponse('No se encontró la imagen para guardar', 400);
+        }
+
+        // ✅ Guardar el avatar anterior antes de eliminarlo
+        $avatarAnterior = $userExists->avatar;
+
+        $file = $request->file('imagen_file');
+        
+        // ✅ Validar que sea una imagen válida
+        if (!$file->isValid()) {
+            DB::rollBack();
+            return $this->errorResponse('El archivo no es válido', 400);
+        }
+        
+        $extension = $file->getClientOriginalExtension();
+        $filename = $userId . '_userimg.' . $extension;
+        
+        // ✅ Guardar imagen con verificación
+        $storeResult = $file->storeAs('public/img/users', $filename);
+        
+        if (!$storeResult) {
+            DB::rollBack();
+            return $this->errorResponse('Error al guardar el archivo', 500);
+        }
+        
+        // ✅ Verificar que el archivo se haya guardado físicamente
+        $filePath = storage_path('app/public/img/users/' . $filename);
+        if (!file_exists($filePath) || filesize($filePath) === 0) {
+            DB::rollBack();
+            return $this->errorResponse('El archivo no se guardó correctamente', 500);
+        }
+        
+        $usuario = auth('api')->user();
+        $usuarioId = $usuario->id ?? null;
+        $usuarioLogin = $usuario->login_user ?? null;
+        $usuarioNombre = trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null;
+        
+        // ✅ Llamar a la función de PostgreSQL para actualizar la imagen
+        $result = DB::selectOne("
+            SELECT seguridad.fn_usuarios_imagen(
+                ?::BIGINT, 
+                ?::VARCHAR, 
+                ?::BIGINT, 
+                ?::VARCHAR, 
+                ?::VARCHAR, 
+                ?::INET, 
+                ?::TEXT, 
+                ?::UUID
+            ) as result
+        ", [
+            $userId,
+            $filename,
+            $usuarioId,
+            $usuarioLogin,
+            $usuarioNombre,
+            $request->ip(),
+            $request->userAgent(),
+            (string) Str::uuid()
+        ]);
+        
+        $resultado = json_decode($result->result, true);
+        
+        if ($resultado['success']) {
+            // ✅ Eliminar avatar anterior SOLO después de confirmar que la BD se actualizó
+            if ($avatarAnterior && $avatarAnterior !== $filename) {
+                $oldImagePath = storage_path('app/public/img/users/' . $avatarAnterior);
+                if (file_exists($oldImagePath)) {
+                    unlink($oldImagePath);
+                }
+            }
+            
+            DB::commit();
+            
+            sistemaLog('info', 'Imagen guardada exitosamente', [
+                'user_id' => $userId,
+                'avatar' => $filename,
+                'usuario' => $usuarioLogin ?? 'desconocido'
+            ]);
+            
+            return $this->successResponse([
+                'avatar' => $resultado['data']['avatar'],
+                'full_path' => asset('storage/img/users/' . $resultado['data']['avatar'])
+            ], $resultado['message']);
+        } else {
+            // ✅ Si falló la BD, eliminar la imagen que acabamos de guardar
+            $newImagePath = storage_path('app/public/img/users/' . $filename);
+            if (file_exists($newImagePath)) {
+                unlink($newImagePath);
+            }
+            DB::rollBack();
+            return $this->errorResponse($resultado['message'], 400);
+        }
+        
+    } catch (Exception $e) {
+        DB::rollBack();
+        sistemaLog('error', 'Error en addImagen', [
+            'code' => $e->getCode(),
+            'message' => $e->getMessage(),
+            'line' => $e->getLine(),
+            'user_id' => $request->UserId ?? null
+        ]);
+        return $this->errorResponse($e->getMessage(), 500);
     }
+}
+
 
     private function eliminarImagenUsuarioPorNombre($avatar)
     {
