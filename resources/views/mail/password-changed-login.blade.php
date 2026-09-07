@@ -158,7 +158,10 @@
         <!-- Cabecera con logo (color verde para éxito) -->
         <div class="header">
             <div class="logo">
-                <img src="{{ $message->embed(public_path('storage/img/mail/mail.png')) }}" alt="Logo">
+                @php $rutaLogo = public_path('storage/img/mail/mail.png'); @endphp
+                @if (file_exists($rutaLogo))
+                    <img src="{{ $message->embed($rutaLogo) }}" alt="Logo">
+                @endif
             </div>
         </div>
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\auth;
 
 use Exception;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -16,14 +17,62 @@ class UserController extends Controller
 {
     use ApiResponder;
 
+    /**
+     * SQLSTATE que las funciones de seguridad usan para las reglas de negocio.
+     * Son errores del usuario, no fallos del servidor: se responden como 4xx.
+     *
+     * Las funciones lanzan RAISE EXCEPTION en lugar de devolver
+     * {success:false}, de modo que PostgreSQL aborta la transacción y el
+     * rollback queda garantizado por la base de datos. Aquí sólo traducimos.
+     */
+    private const ERRORES_NEGOCIO = [
+        'P0001' => 422,   // nombre obligatorio
+        'P0002' => 422,   // apellido obligatorio
+        'P0003' => 422,   // login obligatorio
+        'P0004' => 422,   // email obligatorio
+        'P0005' => 422,   // contraseña obligatoria
+        'P0006' => 409,   // login duplicado
+        'P0007' => 409,   // email duplicado
+        'P0008' => 422,   // perfil inexistente
+        'P0009' => 422,   // horario inexistente
+        'P0010' => 422,   // tipo de usuario inválido
+        'P0011' => 422,   // teléfono obligatorio
+        'P0012' => 422,   // horario obligatorio
+        'P0013' => 404,   // el usuario no existe
+        'P0014' => 409,   // no se puede eliminar: tiene registros asociados
+    ];
+
     public function __construct() {
         $this->middleware('auth:api', ['except' => [
             'getImagenUsuario',
             'verificarUsuarioRecuperacion',
-            'solicitarRecuperacion',      
-            'verificarRecuperacion',      
-            'cambiarPasswordRecuperacion' 
+            'solicitarRecuperacion',
+            'verificarRecuperacion',
+            'cambiarPasswordRecuperacion'
         ]]);
+    }
+
+    /**
+     * Convierte el error de una función PL/pgSQL en [mensaje, código HTTP].
+     *
+     * PDO entrega el mensaje del servidor con prefijos de ruido
+     * ("SQLSTATE[P0001]: Raise exception: 7 ERROR:  texto") y a veces con un
+     * bloque CONTEXT detrás; nos quedamos sólo con el texto del RAISE.
+     */
+    private function traducirErrorPostgres(QueryException $e): array
+    {
+        $sqlState = $e->errorInfo[0] ?? null;
+
+        if (!isset(self::ERRORES_NEGOCIO[$sqlState])) {
+            // No es una regla de negocio: es un fallo real del servidor.
+            return ['Ocurrió un error al procesar la solicitud', 500];
+        }
+
+        $mensaje = $e->errorInfo[2] ?? $e->getMessage();
+        $mensaje = preg_replace('/^.*?ERROR:\s*/s', '', $mensaje);   // quita el prefijo
+        $mensaje = preg_split('/\R\s*(CONTEXT|DETALLE|DETAIL|HINT):/', $mensaje)[0];
+
+        return [trim($mensaje), self::ERRORES_NEGOCIO[$sqlState]];
     }
 
     public function allUsers(Request $request)
@@ -102,11 +151,14 @@ class UserController extends Controller
                 'login_user' => 'required|string|max:100',
                 'email' => 'required|email|max:255',
                 'password' => 'required|string|min:8',
-                'phone' => 'nullable|string|max:20',
+                'phone' => 'required|string|max:20',
                 'avatar' => 'nullable|string|max:255',
                 'isactive' => 'boolean',
+                // Sin esta regla, validated() descartaba type_user y la función
+                // de PostgreSQL lo escribía a fuego como 1 (SUPER USUARIO).
+                'type_user' => 'required|integer|in:1,2,3,4',
                 'perfil_id' => 'nullable|integer',
-                'chorario_id' => 'nullable|integer'
+                'chorario_id' => 'required|integer'
             ]);
             
             if ($validator->fails()) {
@@ -132,6 +184,7 @@ class UserController extends Controller
                     ?::VARCHAR,   -- p_password
                     ?::VARCHAR,   -- p_avatar
                     ?::BOOLEAN,   -- p_isactive
+                    ?::INTEGER,   -- p_type_user
                     ?::INTEGER,   -- p_perfil_id
                     ?::INTEGER,   -- p_chorario_id
                     ?::BIGINT,    -- p_usuario_id
@@ -145,13 +198,14 @@ class UserController extends Controller
                 $validatedData['name'],
                 $validatedData['surname'],
                 $validatedData['email'],
-                $validatedData['phone'] ?? null,
+                $validatedData['phone'],
                 $validatedData['login_user'],
                 bcrypt($validatedData['password']),
                 $validatedData['avatar'] ?? null,
                 $validatedData['isactive'] ?? true,
+                $validatedData['type_user'],
                 $validatedData['perfil_id'] ?? 1,
-                $validatedData['chorario_id'] ?? null,
+                $validatedData['chorario_id'],
                 $usuarioId ? (int)$usuarioId : null,
                 $usuarioLogin,
                 $usuarioNombre,
@@ -159,30 +213,39 @@ class UserController extends Controller
                 $request->userAgent(),
                 (string) Str::uuid()
             ]);
-            
-            // 4. Decodificar el resultado
+
+            // 4. Decodificar el resultado. La función ya no devuelve
+            //    {success:false}: si algo falla, lanza y cae en el catch.
             $resultado = json_decode($result->result, true);
-            
-            // 5. Evaluar respuesta
-            if ($resultado['success']) {
-                sistemaLog('info', 'Usuario creado exitosamente', [
-                    'usuario_id' => $resultado['data']['id'],
-                    'login_user' => $resultado['data']['login_user'],
-                    'usuario' => $usuarioLogin ?? 'desconocido'
-                ]);
-                return $this->successResponse($resultado['data'], $resultado['message']);
-            } else {
-                return $this->errorResponse($resultado['message'], 400);
-            }
-            
+
+            sistemaLog('info', 'Usuario creado exitosamente', [
+                'usuario_id' => $resultado['data']['id'],
+                'login_user' => $resultado['data']['login_user'],
+                'type_user'  => $resultado['data']['type_user'],
+                'usuario'    => $usuarioLogin ?? 'desconocido'
+            ]);
+
+            return $this->successResponse($resultado['data'], $resultado['message']);
+
+        } catch (QueryException $e) {
+            // Regla de negocio lanzada por la función, o fallo real de BD.
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'addUser rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null,
+                'message'  => $e->getMessage(),
+                'usuario'  => $usuarioLogin ?? 'desconocido'
+            ]);
+
+            return $this->errorResponse($mensaje, $codigo);
+
         } catch (Exception $e) {
             sistemaLog('error', 'Error en addUser', [
                 'code' => $e->getCode(),
                 'message' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'data' => $request->all()
+                'line' => $e->getLine()
             ]);
-            return $this->errorResponse($e->getMessage(), 500);
+            return $this->errorResponse('Ocurrió un error al crear el usuario', 500);
         }
     }
 
@@ -284,16 +347,27 @@ class UserController extends Controller
             } else {
                 return $this->errorResponse($resultado['message'], 400);
             }
-            
+
+        } catch (QueryException $e) {
+            // Regla de negocio lanzada por fn_usuarios_modificar, o fallo real de BD
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'editUser rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null,
+                'message'  => $e->getMessage(),
+                'usuario_id' => $id
+            ]);
+
+            return $this->errorResponse($mensaje, $codigo);
+
         } catch (Exception $e) {
             sistemaLog('error', 'Error en editUser', [
                 'code' => $e->getCode(),
                 'message' => $e->getMessage(),
                 'line' => $e->getLine(),
-                'usuario_id' => $id,
-                'data' => $request->all()
+                'usuario_id' => $id
             ]);
-            return $this->errorResponse($e->getMessage(), 500);
+            return $this->errorResponse('Ocurrió un error al actualizar el usuario', 500);
         }
     }
 
@@ -347,6 +421,18 @@ class UserController extends Controller
                 return $this->errorResponse($resultado['message'], 400);
             }
 
+        } catch (QueryException $e) {
+            // Regla de negocio lanzada por fn_usuarios_eliminar, o fallo real de BD
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'deleteUser rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null,
+                'message'  => $e->getMessage(),
+                'usuario_id' => $id
+            ]);
+
+            return $this->errorResponse($mensaje, $codigo);
+
         } catch (Exception $e) {
             sistemaLog('error', 'Error en deleteUser', [
                 'code' => $e->getCode(),
@@ -354,7 +440,7 @@ class UserController extends Controller
                 'line' => $e->getLine(),
                 'usuario_id' => $id
             ]);
-            return $this->errorResponse($e->getMessage(), 500);
+            return $this->errorResponse('Ocurrió un error al eliminar el usuario', 500);
         }
     }
         
@@ -587,11 +673,18 @@ public function addImagen(Request $request)
             
             // 7. Evaluar respuesta
             if ($resultado['success']) {
+                // El correo es informativo: si falla NO se revierte el cambio,
+                // pero la interfaz tiene que poder avisarlo. Antes fallaba en
+                // silencio y la respuesta decía "éxito" igualmente.
+                $correoEnviado = false;
+
                 // Enviar email de notificación
                 try {
                     $emailController = new EmailController();
-                    
-                    // Crear objeto para la vista (igual que antes)
+
+                    // La clave va en el correo a propósito: es TEMPORAL y el
+                    // usuario está obligado a cambiarla al iniciar sesión
+                    // (isreset = true), así que solo sirve para ese primer acceso.
                     $object = (object) [
                         'email' => $userExists->email,
                         'password' => $validatedData['password']
@@ -610,7 +703,7 @@ public function addImagen(Request $request)
                     
                     // Enviar correo con el método parametrizable
                     // para que funione revisa .env y config/mail.php
-                    $emailController->send_email(
+                    $correoEnviado = $emailController->send_email(
                         $userExists->email,  // destinatario
                         $object,  //data
                         'Cambio de Contraseña - ' . env('APP_NAME'),  // ASUNTO
@@ -642,13 +735,34 @@ public function addImagen(Request $request)
                 
                 sistemaLog('info', 'Contraseña cambiada exitosamente', [
                     'usuario_id' => $id,
-                    'usuario' => $usuarioLogin ?? 'desconocido'
+                    'usuario' => $usuarioLogin ?? 'desconocido',
+                    'correo_enviado' => $correoEnviado
                 ]);
-                return $this->successResponse($resultado['data'], $resultado['message']);
+
+                // email_enviado permite que el front avise de que la clave sí
+                // cambió pero la notificación no salió.
+                return $this->successResponse(
+                    array_merge($resultado['data'], ['email_enviado' => $correoEnviado]),
+                    $correoEnviado
+                        ? $resultado['message']
+                        : $resultado['message'] . '. No se pudo enviar el correo de notificación.'
+                );
             } else {
                 return $this->errorResponse($resultado['message'], 400, $resultado['error_code'] ?? null);
             }
             
+        } catch (QueryException $e) {
+            // Regla de negocio lanzada por fn_usuarios_cambiar_password, o fallo de BD
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'cambio de contraseña rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null,
+                'message'  => $e->getMessage(),
+                'usuario_id' => $id
+            ]);
+
+            return $this->errorResponse($mensaje, $codigo);
+
         } catch (Exception $e) {
             sistemaLog('error', 'Error en changePassword', [
                 'code' => $e->getCode(),
@@ -656,7 +770,7 @@ public function addImagen(Request $request)
                 'line' => $e->getLine(),
                 'usuario_id' => $id
             ]);
-            return $this->errorResponse($e->getMessage(), 500);
+            return $this->errorResponse('Ocurrió un error al cambiar la contraseña', 500);
         }
     }
 
@@ -720,10 +834,14 @@ public function addImagen(Request $request)
             
             // 7. Evaluar respuesta
             if ($resultado['success']) {
+                // El correo es informativo: si falla NO se revierte el cambio,
+                // pero la interfaz tiene que poder avisarlo.
+                $correoEnviado = false;
+
                 // Enviar email de notificación
                 try {
                     $emailController = new EmailController();
-                    
+
                     // Crear objeto para la vista (igual que antes)
                     $object = (object) [
                         'email' => $userExists->email,
@@ -743,7 +861,7 @@ public function addImagen(Request $request)
                     
                     // Enviar correo con el método parametrizable
                     // para que funione revisa .env y config/mail.php
-                    $emailController->send_email(
+                    $correoEnviado = $emailController->send_email(
                         $userExists->email,  // destinatario
                         $object,  //data
                         'Cambio de Contraseña - ' . env('APP_NAME'),  // ASUNTO
@@ -775,13 +893,34 @@ public function addImagen(Request $request)
                 
                 sistemaLog('info', 'Contraseña cambiada exitosamente', [
                     'usuario_id' => $id,
-                    'usuario' => $usuarioLogin ?? 'desconocido'
+                    'usuario' => $usuarioLogin ?? 'desconocido',
+                    'correo_enviado' => $correoEnviado
                 ]);
-                return $this->successResponse($resultado['data'], $resultado['message']);
+
+                // email_enviado permite que el front avise de que la clave sí
+                // cambió pero la notificación no salió.
+                return $this->successResponse(
+                    array_merge($resultado['data'], ['email_enviado' => $correoEnviado]),
+                    $correoEnviado
+                        ? $resultado['message']
+                        : $resultado['message'] . '. No se pudo enviar el correo de notificación.'
+                );
             } else {
                 return $this->errorResponse($resultado['message'], 400, $resultado['error_code'] ?? null);
             }
             
+        } catch (QueryException $e) {
+            // Regla de negocio lanzada por fn_usuarios_cambiar_password, o fallo de BD
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'cambio de contraseña rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null,
+                'message'  => $e->getMessage(),
+                'usuario_id' => $id
+            ]);
+
+            return $this->errorResponse($mensaje, $codigo);
+
         } catch (Exception $e) {
             sistemaLog('error', 'Error en changePassword', [
                 'code' => $e->getCode(),
@@ -789,7 +928,7 @@ public function addImagen(Request $request)
                 'line' => $e->getLine(),
                 'usuario_id' => $id
             ]);
-            return $this->errorResponse($e->getMessage(), 500);
+            return $this->errorResponse('Ocurrió un error al cambiar la contraseña', 500);
         }
     }
 
@@ -1052,20 +1191,37 @@ public function solicitarRecuperacion(Request $request)
                 ];
             }
             
-            $emailController->send_email(
+            $correoEnviado = $emailController->send_email(
                 $data['email'],
                 $object,
                 '🔐 Código de Recuperación - ' . env('APP_NAME'),
                 'mail.password-recovery-code',
                 $attachments
             );
-            
+
+            // Aquí el correo NO es informativo: es el único canal por el que el
+            // usuario recibe el código. Si no sale, decirle "código enviado" lo
+            // deja esperando algo que nunca llega. send_email captura sus
+            // propias excepciones y devuelve false, así que hay que mirarlo.
+            if (!$correoEnviado) {
+                sistemaLog('error', 'No se pudo enviar el código de recuperación', [
+                    'usuario_id' => $data['id'],
+                    'email' => $data['email'],
+                    'ip' => $request->ip()
+                ]);
+
+                return $this->errorResponse(
+                    'No se pudo enviar el código a tu correo. Intenta de nuevo o contacta a soporte.',
+                    503
+                );
+            }
+
             sistemaLog('info', 'Código de recuperación enviado', [
                 'usuario_id' => $data['id'],
                 'email' => $data['email'],
                 'ip' => $request->ip()
             ]);
-            
+
             // No devolvemos el código en la respuesta por seguridad
             return $this->successResponse([
                 'email' => $data['email']
@@ -1212,6 +1368,7 @@ public function cambiarPasswordRecuperacion(Request $request)
             ', [(int)$userData['id']]);
             
             // Enviar correo de confirmación
+            $correoEnviado = false;
             try {
                 $emailController = new EmailController();
                 
@@ -1232,21 +1389,28 @@ public function cambiarPasswordRecuperacion(Request $request)
                     ];
                 }
                 
-                $emailController->send_email(
+                $correoEnviado = $emailController->send_email(
                     $userData['email'],
                     $object,
                     'Contraseña actualizada - ' . env('APP_NAME'),
                     'mail.password-changed-success',
                     $attachments
                 );
-                
+
             } catch (Exception $e) {
                 sistemaLog('warning', 'Error al enviar email de confirmación', [
                     'message' => $e->getMessage()
                 ]);
             }
-            
-            return $this->successResponse($resultado['data'], 'Contraseña actualizada correctamente');
+
+            // Aviso posterior al cambio: si falla no se revierte nada, pero se
+            // informa en vez de callarlo.
+            return $this->successResponse(
+                array_merge($resultado['data'], ['email_enviado' => $correoEnviado]),
+                $correoEnviado
+                    ? 'Contraseña actualizada correctamente'
+                    : 'Contraseña actualizada correctamente. No se pudo enviar el correo de confirmación.'
+            );
         } else {
             return $this->errorResponse($resultado['message'], 400);
         }

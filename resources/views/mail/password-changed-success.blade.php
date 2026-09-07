@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>Código de Recuperación</title>
+    <title>Contraseña restablecida</title>
     <style type="text/css">
         * {
             margin: 0;
@@ -29,7 +29,7 @@
         }
         
         .header {
-            background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
             padding: 30px;
             text-align: center;
         }
@@ -53,7 +53,7 @@
         
         .title {
             font-size: 24px;
-            color: #1a73e8;
+            color: #28a745;
             text-align: center;
             margin-bottom: 20px;
             font-weight: 600;
@@ -66,34 +66,25 @@
             text-align: center;
         }
         
-        .code-box {
-            background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
-            border-left: 4px solid #ffc107;
+        .success-box {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-left: 4px solid #28a745;
             padding: 20px;
             border-radius: 8px;
             margin: 25px 0;
             text-align: center;
         }
         
-        .code-label {
-            font-size: 14px;
-            color: #856404;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        .success-icon {
+            font-size: 48px;
+            color: #28a745;
             margin-bottom: 10px;
         }
         
-        .code-value {
-            font-size: 32px;
-            font-weight: bold;
-            color: #d9534f;
-            font-family: monospace;
-            letter-spacing: 5px;
-            background: #fff;
-            display: inline-block;
-            padding: 15px 25px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        .success-text {
+            font-size: 16px;
+            color: #155724;
+            font-weight: 500;
         }
         
         .message {
@@ -102,16 +93,16 @@
             text-align: center;
         }
         
-        .warning-box {
-            background-color: #f8d7da;
-            border-left: 4px solid #dc3545;
+        .info-box {
+            background-color: #d1ecf1;
+            border-left: 4px solid #17a2b8;
             padding: 15px 20px;
             border-radius: 8px;
             margin: 25px 0;
         }
         
-        .warning-text {
-            color: #721c24;
+        .info-text {
+            color: #0c5460;
             font-size: 14px;
             text-align: center;
         }
@@ -129,6 +120,23 @@
             margin: 5px 0;
         }
         
+        .button {
+            display: inline-block;
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+            color: white;
+            text-decoration: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-weight: 600;
+            margin: 15px 0;
+            transition: all 0.3s ease;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+        
         @media (max-width: 480px) {
             .content {
                 padding: 25px 20px;
@@ -136,12 +144,6 @@
             
             .title {
                 font-size: 20px;
-            }
-            
-            .code-value {
-                font-size: 24px;
-                padding: 10px 15px;
-                letter-spacing: 3px;
             }
             
             .header {
@@ -153,6 +155,7 @@
 <body>
 
     <div class="container">
+        <!-- Cabecera con logo (color verde para éxito) -->
         <div class="header">
             <div class="logo">
                 @php $rutaLogo = public_path('storage/img/mail/mail.png'); @endphp
@@ -162,42 +165,46 @@
             </div>
         </div>
 
+        <!-- Contenido principal -->
         <div class="content">
-            <h1 class="title">Recuperación de Contraseña</h1>
+            <div class="success-icon">✓</div>
+            <h1 class="title">¡Contraseña Actualizada!</h1>
             
             <div class="greeting">
-                Estimado/a, <strong>{{ $object->email }}</strong>
+                Estimado/a, <strong>{{ $object->name ?? $object->email }}</strong>
             </div>
             
-            <div class="message">
-                Hemos recibido una solicitud para recuperar tu contraseña en <strong>miEMPRESA Cía. Ltda.</strong>
-            </div>
-            
-            <div class="code-box">
-                <div class="code-label">🔐 Tu código de verificación es:</div>
-                <div class="code-value">{{ $object->codigo }}</div>
-                <div style="font-size: 12px; color: #856404; margin-top: 10px;">
-                    ⏰ Este código expira en 15 minutos
+            <div class="success-box">
+                <div class="success-text">
+                    🔒 Tu contraseña se restableció correctamente.
+                    @isset($object->fecha)
+                        <br><span style="font-size: 13px;">{{ $object->fecha }}</span>
+                    @endisset
                 </div>
             </div>
             
             <div class="message">
-                <strong>Instrucciones:</strong>
-                <ol style="margin-top: 10px; text-align: left; display: inline-block;">
-                    <li>1. Ingresa este código en la aplicación</li>
-                    <li>2. Podrás establecer una nueva contraseña</li>
-                    <li>3. La solicitud expirará en 15 minutos</li>
-                </ol>
+                <strong>Información importante:</strong>
+                <ul style="margin-top: 10px; text-align: left; display: inline-block;">
+                    <li>✓ Tu nueva contraseña ha sido registrada en el sistema</li>
+                    <li>✓ Puedes iniciar sesión con tu nueva contraseña de inmediato</li>
+                    <li>✓ Te recomendamos no compartir tu contraseña con nadie</li>
+                </ul>
             </div>
             
-            <div class="warning-box">
-                <div class="warning-text">
-                    ⚠️ <strong>Nota importante:</strong> Si no solicitaste este cambio, ignora este correo 
-                    o contacta a soporte inmediatamente.
+            <div class="info-box">
+                <div class="info-text">
+                    🔐 <strong>¿No realizaste este cambio?</strong><br>
+                    Si no solicitaste este cambio de contraseña, contacta inmediatamente al administrador del sistema.
                 </div>
+            </div>
+            
+            <div style="text-align: center;">
+                <a href="{{ env('APP_URL') }}" class="button">Ir al Sistema</a>
             </div>
         </div>
 
+        <!-- Pie de página -->
         <div class="footer">
             <div class="footer-text">
                 <strong>miEmpresa Cía. Ltda.</strong>
