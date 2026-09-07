@@ -4,6 +4,7 @@ namespace App\Http\Controllers\auth;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\DB;
 use App\Models\auth\User;
 use App\Http\Resources\ApiResponder;
@@ -103,6 +104,26 @@ class AuthController extends Controller
 
 
 
+    /**
+     * Borra el contador de intentos fallidos tras un inicio de sesión correcto.
+     *
+     * Se limpia SOLO la clave de cuenta+IP, nunca la de IP sola: esa segunda es
+     * la que frena el barrido de muchas cuentas desde un mismo origen, y si un
+     * acierto la reiniciara, a un atacante con una cuenta válida le bastaría
+     * entrar cada pocos intentos para recuperar presupuesto de escaneo.
+     *
+     * La clave se construye igual que en ThrottleRequests::handleRequestUsingNamedLimiter()
+     * (vendor/laravel/framework/src/Illuminate/Routing/Middleware/ThrottleRequests.php):
+     * md5(nombreDelLimitador . claveDelLimite). Debe seguir a
+     * RouteServiceProvider::boot(), donde se define el limitador 'login'.
+     */
+    private function limpiarIntentosLogin(string $loginUser): void
+    {
+        $cuenta = strtolower(trim($loginUser));
+
+        RateLimiter::clear(md5('login' . 'login:' . $cuenta . '|' . request()->ip()));
+    }
+
     public function login()
     {
         // 1. VALIDACIÓN DE CAMPOS
@@ -187,6 +208,11 @@ class AuthController extends Controller
         if (!$token = auth('api')->login($userModel)) {
             return $this->errorResponse('No se pudo generar token', 500);
         }
+
+        // Credenciales correctas: se borra el contador de intentos de ESTA
+        // cuenta desde ESTA IP, para que los fallos de tecleo previos no le
+        // resten intentos al usuario legítimo.
+        $this->limpiarIntentosLogin($login_user);
 
         // 6. OBTENER JTI DEL TOKEN
         $payload = JWTAuth::setToken($token)->getPayload();

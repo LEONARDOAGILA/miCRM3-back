@@ -18,8 +18,10 @@ Route::group([
     //'prefix' => 'auth',
 ], function () {
     Route::post('/register', [AuthController::class, 'register'])->name('register');
-    Route::post('/login', [AuthController::class, 'login'])->name('login');
-    Route::post('/login_ecommerce', [AuthController::class, 'login_ecommerce'])->name('login_ecommerce');
+    // throttle:login -> 5 intentos/min por cuenta+IP y 20/min por IP.
+    // Sin esto heredan el throttle:auth del grupo, que son 10.000/min.
+    Route::post('/login', [AuthController::class, 'login'])->name('login')->middleware('throttle:login');
+    Route::post('/login_ecommerce', [AuthController::class, 'login_ecommerce'])->name('login_ecommerce')->middleware('throttle:login');
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('/refresh', [AuthController::class, 'refresh'])->name('refresh');
     Route::post('/me', [AuthController::class, 'me'])->name('me');
@@ -93,10 +95,13 @@ Route::group([
     
     // Rutas públicas de recuperación (sin autenticación)
     Route::get('getImagenUsuario/{id}', [UserController::class, 'getImagenUsuario']); 
-    Route::post('verificar-usuario-recuperacion', [UserController::class, 'verificarUsuarioRecuperacion']);
-    Route::post('solicitar-recuperacion', [UserController::class, 'solicitarRecuperacion']);
-    Route::post('verificar-recuperacion', [UserController::class, 'verificarRecuperacion']);   
-    Route::post('cambiar-password-recuperacion', [UserController::class, 'cambiarPasswordRecuperacion']);
+    // Rutas públicas y sin autenticar: el código de recuperación es de 6 dígitos
+    // y la función de PostgreSQL no cuenta intentos fallidos, así que el freno
+    // contra la fuerza bruta es este throttle.
+    Route::post('verificar-usuario-recuperacion', [UserController::class, 'verificarUsuarioRecuperacion'])->middleware('throttle:recuperacion');
+    Route::post('solicitar-recuperacion', [UserController::class, 'solicitarRecuperacion'])->middleware('throttle:recuperacion');
+    Route::post('verificar-recuperacion', [UserController::class, 'verificarRecuperacion'])->middleware('throttle:recuperacion');
+    Route::post('cambiar-password-recuperacion', [UserController::class, 'cambiarPasswordRecuperacion'])->middleware('throttle:recuperacion');
 
 
 });
