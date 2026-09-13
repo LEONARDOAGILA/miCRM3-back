@@ -24,6 +24,7 @@ class Archivo extends Model{
     protected $casts = [
         'escarpeta'    => 'boolean',
         'activo'       => 'boolean',
+        'nueva_ventana' => 'boolean',
         'es_eliminado' => 'boolean',
     ];
 
@@ -39,6 +40,8 @@ class Archivo extends Model{
         'modulo' ,
         'icono' ,
         'activo' ,
+        'nueva_ventana' ,
+        'tamano' ,
         'escarpeta' ,
         'color' 
     ];

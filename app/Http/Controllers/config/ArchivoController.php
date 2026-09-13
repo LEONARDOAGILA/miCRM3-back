@@ -175,6 +175,7 @@ class ArchivoController extends Controller
                     'tamano' => 'nullable|numeric',
                     'escarpeta' => 'required|boolean',
                     'activo' => 'nullable|boolean',
+                    'nueva_ventana' => 'nullable|boolean',
                 ]);
 
                 // Procesa los datos y crea uno nuevo
@@ -192,6 +193,7 @@ class ArchivoController extends Controller
                 $archivo->tipo = $validatedData['tipo'] ?? 'link';
                 $archivo->tamano = $validatedData['tamano'] ?? null;
                 $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
+                $archivo->nueva_ventana = $validatedData['nueva_ventana'] ?? false;   // abrir en otra pestaña
                 $archivo->save(); // Guarda
                 // Registrar auditoría
                 $this->auditar('INSERT', $archivo->id, null, $archivo->toArray());
@@ -253,6 +255,7 @@ class ArchivoController extends Controller
                 'tipo'        => 'nullable|string|max:30',
                 'tamano'      => 'nullable|numeric',
                 'activo'      => 'nullable|boolean',
+                'nueva_ventana' => 'nullable|boolean',   // abrir el enlace en otra pestaña del navegador
             ]);
 
             $archivo = Archivo::findOrFail($id);
