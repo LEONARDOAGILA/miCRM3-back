@@ -19,6 +19,7 @@ Route::group([
     Route::get('getArchivoTree', [ArchivoController::class, 'getArchivoTree']);
     Route::get('findByIdArchivo/{id}', [ArchivoController::class, 'findByIdArchivo']);
     Route::post('addArchivo', [ArchivoController::class, 'addArchivo']);
+    Route::post('subirArchivo', [ArchivoController::class, 'subirArchivo']);   // fichero físico, antes de crear el registro
     Route::post('editArchivo/{id}', [ArchivoController::class, 'editArchivo']);
     Route::delete('deleteArchivo/{id}', [ArchivoController::class, 'deleteArchivo']);   // a la papelera
 

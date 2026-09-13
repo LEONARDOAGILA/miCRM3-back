@@ -2,6 +2,8 @@
 namespace App\Http\Controllers\config;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Exception;
 
@@ -169,7 +171,8 @@ class ArchivoController extends Controller
                     'modulo' => 'nullable|string|max:255',
                     'icono' => 'nullable|string|max:255',
                     'color' => 'nullable|string|max:255',
-                    'tipo' => 'nullable|string|max:255',
+                    'tipo' => 'nullable|string|max:30',
+                    'tamano' => 'nullable|numeric',
                     'escarpeta' => 'required|boolean',
                     'activo' => 'nullable|boolean',
                 ]);
@@ -186,7 +189,8 @@ class ArchivoController extends Controller
                 $archivo->icono = $validatedData['icono'];
                 $archivo->color = $validatedData['color'];
                 $archivo->escarpeta = $validatedData['escarpeta'];
-                $archivo->tipo = $validatedData['tipo'];
+                $archivo->tipo = $validatedData['tipo'] ?? 'link';
+                $archivo->tamano = $validatedData['tamano'] ?? null;
                 $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
                 $archivo->save(); // Guarda
                 // Registrar auditoría
@@ -246,12 +250,20 @@ class ArchivoController extends Controller
                 'modulo'      => 'nullable|string|max:255',
                 'icono'       => 'nullable|string|max:255',
                 'color'       => 'nullable|string|max:255',
-                'tipo'        => 'nullable|string|max:255',
+                'tipo'        => 'nullable|string|max:30',
+                'tamano'      => 'nullable|numeric',
                 'activo'      => 'nullable|boolean',
             ]);
 
             $archivo = Archivo::findOrFail($id);
             $antes   = clone $archivo;
+
+            // Si se sustituyó un fichero subido por otro (o por un enlace), el
+            // anterior ya no lo referencia nadie: se borra del disco.
+            $urlNueva = $validatedData['url'] ?? $archivo->url;
+            if ($urlNueva !== $archivo->url) {
+                $this->borrarFisico($archivo);
+            }
 
             $archivo->fill($validatedData);
             $archivo->save();
@@ -387,6 +399,8 @@ class ArchivoController extends Controller
                 'elementos_borrados' => count($ids),
             ]);
 
+            // Ficheros subidos: fuera del disco antes de perder la referencia
+            Archivo::withTrashed()->whereIn('id', $ids)->get()->each(fn ($a) => $this->borrarFisico($a));
             Archivo::withTrashed()->whereIn('id', $ids)->forceDelete();
 
             DB::commit();
@@ -405,6 +419,7 @@ class ArchivoController extends Controller
             $items = Archivo::onlyTrashed()->get();
             foreach ($items as $item) {
                 $this->auditar('DELETE', $item->id, $item->toArray(), ['definitivo' => true, 'vaciar_papelera' => true]);
+                $this->borrarFisico($item);
             }
             $borrados = Archivo::onlyTrashed()->forceDelete();
 
@@ -416,6 +431,105 @@ class ArchivoController extends Controller
         }
     }
 
+
+    // ================================================================
+    // FICHEROS SUBIDOS
+    // ================================================================
+    // Un "archivo" del administrador puede ser un enlace (tipo = link, la url
+    // es externa) o un fichero subido (imagen, pdf, excel, word, video, otro).
+    // Los subidos se guardan en storage/app/public/img/file-manager, que se
+    // sirve en public/storage/img/file-manager gracias al enlace simbólico
+    // (php artisan storage:link). En `url` se guarda la ruta relativa
+    // "storage/img/file-manager/<fichero>"; el front le antepone la base.
+
+    /** Carpeta dentro del disco `public` donde se guardan las subidas. */
+    private const CARPETA_SUBIDAS = 'img/file-manager';
+
+    /**
+     * Extensiones que se clasifican en cada tipo. Lo que no esté aquí se
+     * guarda como 'otro': no se rechaza nada por la extensión.
+     */
+    private const EXTENSIONES = [
+        'imagen' => ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'tif', 'tiff', 'ico'],
+        'pdf'    => ['pdf'],
+        'excel'  => ['xls', 'xlsx', 'xlsm', 'csv', 'ods'],
+        'word'   => ['doc', 'docx', 'rtf', 'odt'],
+        'video'  => ['mp4', 'webm', 'ogv', 'mov', 'avi', 'mkv', 'wmv', 'm4v', '3gp'],
+        'audio'  => ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'wma', 'opus', 'weba'],
+    ];
+
+    /** Tipo (columna `tipo`) que corresponde a una extensión. */
+    public static function tipoPorExtension(string $extension): string {
+        $ext = strtolower($extension);
+        foreach (self::EXTENSIONES as $tipo => $lista) {
+            if (in_array($ext, $lista, true)) { return $tipo; }
+        }
+        return 'otro';
+    }
+
+    /**
+     * Sube un fichero y devuelve dónde quedó y de qué tipo es. No crea el
+     * registro: eso lo hace addArchivo / editArchivo con la url que se
+     * devuelve aquí.
+     *
+     * El tipo se deduce de la EXTENSIÓN del nombre, no del contenido: la
+     * regla `mimes:` de Laravel inspecciona los bytes, y un .xlsx o un .docx
+     * son ZIP por dentro (los rechazaba como "zip"), y varios formatos de
+     * video no están en su tabla. Tampoco hay tope de tamaño propio: manda
+     * el de php.ini (upload_max_filesize / post_max_size).
+     */
+    public function subirArchivo(Request $request){
+        try {
+            if (!$request->hasFile('archivo') || !$request->file('archivo')->isValid()) {
+                // Si supera post_max_size, PHP descarta la petición entera y
+                // aquí no llega ni el fichero: el mensaje lo explica.
+                return $this->errorResponse('No se recibió el archivo. Si es muy grande, revise upload_max_filesize y post_max_size en php.ini', 422);
+            }
+
+            $fichero   = $request->file('archivo');
+            $extension = strtolower($fichero->getClientOriginalExtension());
+            if ($extension === '') {
+                return $this->errorResponse('El archivo no tiene extensión; no se puede clasificar', 422);
+            }
+            $tipo = self::tipoPorExtension($extension);
+
+            $base   = Str::slug(pathinfo($fichero->getClientOriginalName(), PATHINFO_FILENAME)) ?: 'archivo';
+            // Nombre único y legible: <nombre>-<fecha>-<aleatorio>.<ext>
+            $nombre = substr($base, 0, 60) . '-' . date('Ymd-His') . '-' . Str::lower(Str::random(6)) . '.' . $extension;
+
+            $ruta = $fichero->storeAs(self::CARPETA_SUBIDAS, $nombre, 'public');
+            if (!$ruta) {
+                return $this->errorResponse('No se pudo guardar el archivo en el servidor', 500);
+            }
+
+            return $this->successResponse([
+                'url'             => 'storage/' . $ruta,          // relativa a la base del back
+                'tipo'            => $tipo,
+                'nombre_original' => $fichero->getClientOriginalName(),
+                'nombre'          => $nombre,
+                'extension'       => $extension,
+                'mime'            => $fichero->getClientMimeType(),
+                'tamano'          => $fichero->getSize(),          // bytes
+            ], 'Archivo subido');
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Borra del disco el fichero de un registro, si es una subida nuestra.
+     * Los enlaces (tipo link, url externa) no tienen nada que borrar.
+     */
+    private function borrarFisico(Archivo $archivo): void {
+        $url = (string) $archivo->url;
+        $prefijo = 'storage/' . self::CARPETA_SUBIDAS . '/';
+        if ($archivo->escarpeta || !str_starts_with($url, $prefijo)) { return; }
+
+        $rutaDisco = substr($url, strlen('storage/'));   // img/file-manager/<fichero>
+        if (Storage::disk('public')->exists($rutaDisco)) {
+            Storage::disk('public')->delete($rutaDisco);
+        }
+    }
     // ================================================================
     // AUXILIARES
     // ================================================================
