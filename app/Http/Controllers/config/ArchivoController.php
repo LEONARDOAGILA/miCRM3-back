@@ -1,7 +1,6 @@
 <?php
 namespace App\Http\Controllers\config;
 
-use App\Models\Menu;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Exception;
@@ -23,7 +22,7 @@ class ArchivoController extends Controller
         $this->middleware('auth:api',['except' =>[
             'allArchivos',
             'getArchivoTree',
-            'findByIdMenu',
+            'findByIdArchivo',
 
             'list',
             'findByUser',
@@ -31,58 +30,66 @@ class ArchivoController extends Controller
         ]]);
     }
 
-    public function allArchivos(){
-            try {
-                // Obtener todos los archivos (la ordenación inicial no es necesaria)
-                $archivos = Archivo::all();
+    /**
+     * Contenido de una carpeta, paginado en servidor.
+     *
+     * Parámetros (query string):
+     *   padre     id de la carpeta; 0 o ausente = raíz
+     *   page      página (desde 1)
+     *   per_page  filas por página (1-100, por defecto 10)
+     *   search    filtra por nombre o descripción dentro de esa carpeta
+     *
+     * Respuesta con la misma forma que los listados paginados de seguridad
+     * (allUsers, listHorarios), para que el front la consuma igual:
+     *   data: { data: [...], meta: { total, per_page, current_page, last_page,
+     *                                 carpetas, archivos } }
+     * `carpetas` y `archivos` son los totales de la carpeta (no de la página),
+     * para la barra de estado. Las carpetas van antes que los archivos, y
+     * dentro de cada grupo por `orden` y nombre.
+     */
+    public function allArchivos(Request $request){
+        try {
+            $padre   = (int) $request->input('padre', 0);
+            $perPage = max(1, min(100, (int) $request->input('per_page', 10)));
+            $search  = trim((string) $request->input('search', ''));
 
-                // Aplicar ordenación que respete el parent
-                $sortedArchivos = $this->sortByParent($archivos);
-
-                $dateFields = ['created_at', 'updated_at'];
-                $sortedArchivos->map(function ($item) use ($dateFields) {
-                    $funciones = new Funciones();
-                    $funciones->formatoFechaItem($item, $dateFields);
-                    return $item;
+            $base = Archivo::where('padre', $padre);
+            if ($search !== '') {
+                $base->where(function ($q) use ($search) {
+                    $q->where('nombre', 'ILIKE', "%{$search}%")
+                      ->orWhere('descripcion', 'ILIKE', "%{$search}%");
                 });
-
-                return $this->successResponse($sortedArchivos, 'La solicitud ha tenido éxito');
-            } catch (Exception $e) {
-                return $this->errorResponse($e->getMessage(), (int)$e->getCode());
             }
-    }
 
-    private function sortByParent($archivos){
-        $children = [];
+            // Totales de la carpeta (con el filtro aplicado) para la barra de estado
+            $carpetas = (clone $base)->where('escarpeta', true)->count();
+            $archivos = (clone $base)->where('escarpeta', false)->count();
 
-        // Agrupar los archivos por su padre
-        foreach ($archivos as $archivo) {
-            $parentId = $archivo->padre ?? 0; // Usar 0 como padre raíz si es null
-            $children[$parentId][] = $archivo;
-        }
+            $pagina = (clone $base)
+                ->orderByDesc('escarpeta')
+                ->orderBy('orden')
+                ->orderBy('nombre')
+                ->paginate($perPage);
 
-        // Ordenar los hijos dentro de cada grupo por orden
-        foreach ($children as $padreId => &$childList) {
-            usort($childList, function ($a, $b) {
-                return [$a->orden, $a->id] <=> [$b->orden, $b->id];
-            });
-        }
+            $funciones = new Funciones();
+            $items = collect($pagina->items())->map(function ($item) use ($funciones) {
+                $funciones->formatoFechaItem($item, ['created_at', 'updated_at']);
+                return $item;
+            })->values();
 
-        $sorted = collect();
-        // Función recursiva para agregar los elementos respetando la jerarquía
-        $this->addChildren(0, $children, $sorted);
-
-        return $sorted;
-    }
-
-    private function addChildren($parentId, $children, $sorted){
-        if (!isset($children[$parentId])) {
-            return;
-        }
-
-        foreach ($children[$parentId] as $archivo) {
-            $sorted->push($archivo); // Agregar el archivo principal
-            $this->addChildren($archivo->id, $children, $sorted); // Agregar sus hijos
+            return $this->successResponse([
+                'data' => $items,
+                'meta' => [
+                    'total'        => $pagina->total(),
+                    'per_page'     => $pagina->perPage(),
+                    'current_page' => $pagina->currentPage(),
+                    'last_page'    => max(1, $pagina->lastPage()),
+                    'carpetas'     => $carpetas,
+                    'archivos'     => $archivos,
+                ],
+            ], 'La solicitud ha tenido éxito');
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
         }
     }
 
@@ -145,30 +152,6 @@ class ArchivoController extends Controller
 
     
 
-    
-
-    
-
-    
-
-    
-
-    private function addArchivoWithParent($menu, $menuById, &$sorted, &$processed)
-    {
-        if (isset($processed[$menu->id])) {
-            return;
-        }
-
-        // Si tiene un padre y aún no se ha agregado, lo agregamos primero
-        if ($menu->parent != 0 && isset($menuById[$menu->parent]) && !isset($processed[$menu->parent])) {
-            $this->addMenuWithParent($menuById[$menu->parent], $menuById, $sorted, $processed);
-        }
-
-        // Agregar el menú y marcarlo como procesado
-        $sorted->push($menu);
-        $processed[$menu->id] = true;
-    }
-
     public function addArchivo(Request $request){
         DB::beginTransaction();
 
@@ -181,13 +164,14 @@ class ArchivoController extends Controller
                     'orden' => 'nullable|integer',
                     'nivel' => 'nullable|integer',
                     'nombre' => 'required|string|max:255',
-                    'url' => 'nullable|string|max:255',
+                    'url' => 'nullable|string|max:500',
                     'descripcion' => 'nullable|string',
                     'modulo' => 'nullable|string|max:255',
                     'icono' => 'nullable|string|max:255',
                     'color' => 'nullable|string|max:255',
                     'tipo' => 'nullable|string|max:255',
                     'escarpeta' => 'required|boolean',
+                    'activo' => 'nullable|boolean',
                 ]);
 
                 // Procesa los datos y crea uno nuevo
@@ -203,9 +187,10 @@ class ArchivoController extends Controller
                 $archivo->color = $validatedData['color'];
                 $archivo->escarpeta = $validatedData['escarpeta'];
                 $archivo->tipo = $validatedData['tipo'];
+                $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
                 $archivo->save(); // Guarda
                 // Registrar auditoría
-                AuditoriaService::registrarAuditoria('archivo', $archivo->id, 'CREATE', null, $archivo);
+                $this->auditar('INSERT', $archivo->id, null, $archivo->toArray());
                 $exitoso = Archivo::orderBy('id', 'desc')->get();
                 // Especificar las propiedades que representan fechas en tu objeto Nota
                 $dateFields = ['created_at', 'updated_at'];
@@ -226,103 +211,240 @@ class ArchivoController extends Controller
         }
     }
 
-    public function findByIdMenu($id){
+    /**
+     * Un archivo/carpeta por id, con las fechas formateadas como el resto.
+     */
+    public function findByIdArchivo($id){
         try {
-            $data = null;
+            $archivo = Archivo::findOrFail($id);
 
-            $data = Menu::where('id', $id)
-                    ->first(); // Limita el resultado a 1 registro    
-            
-            return $this->successResponse($data,'La solicitud ha tenido éxito');
-            
+            $funciones = new Funciones();
+            $funciones->formatoFechaItem($archivo, ['created_at', 'updated_at']);
+
+            return $this->successResponse($archivo, 'La solicitud ha tenido éxito');
         } catch (Exception $e) {
-                return $this->errorResponse($e->getMessage(), (int)$e->getCode());
+            return $this->errorResponse('No existe el archivo', 404);
         }
     }
 
-
-
-
-
-
-    public function editMenu(Request $request, $id)
-    {
+    /**
+     * Modifica un archivo o carpeta.
+     *
+     * Sólo se tocan los campos editables: el padre, el nivel y si es carpeta
+     * se fijan al crearlo y no cambian desde aquí (moverlo de rama sería
+     * otra operación, con sus propias comprobaciones).
+     */
+    public function editArchivo(Request $request, $id){
         DB::beginTransaction();
 
         try {
-            // Decodificar el JSON de entrada
-            $params_array = json_decode($request->input('json', null), true);
-            $params_array1 = $params_array;
-            
-            // Validar los datos
-            $validatedData = \Validator::make($params_array, [
-                'order2' => 'nullable|integer',
-                'name' => 'required|string|max:255',
-                'url' => 'nullable|string|max:255',
-                'description' => 'nullable|string',
-                'label' => 'nullable|string|max:255',
-                'icon' => 'nullable|string|max:255',
+            $validatedData = $this->validate($request, [
+                'orden'       => 'nullable|integer',
+                'nombre'      => 'required|string|max:255',
+                'url'         => 'nullable|string|max:500',
+                'descripcion' => 'nullable|string',
+                'modulo'      => 'nullable|string|max:255',
+                'icono'       => 'nullable|string|max:255',
+                'color'       => 'nullable|string|max:255',
+                'tipo'        => 'nullable|string|max:255',
+                'activo'      => 'nullable|boolean',
             ]);
-    
-            if ($validatedData->fails()) {
-                return $this->errorResponse($validatedData->errors(), 400);
-            }
-    
-            // Obtener el perfil actual antes de la actualización
-            $BeforeUpdate = Menu::findOrFail($id);
-    
-            // Actualizar el menu
-            $menuId = Menu::where('id', $id)->update($params_array1);
-    
-            // Quitar campos que no quiero actualizar
-            unset($params_array['id']);
-            unset($params_array['created_at']);
-            unset($params_array['updated_at']);
-    
-            // Obtener el perfil actualizado
-            $afterUpdated = Menu::findOrFail($id);
-        
-            // Especificar las propiedades que representan fechas en tu objeto Nota
-            $dateFields = ['created_at', 'updated_at'];
+
+            $archivo = Archivo::findOrFail($id);
+            $antes   = clone $archivo;
+
+            $archivo->fill($validatedData);
+            $archivo->save();
+
+            $this->auditar('UPDATE', $archivo->id, $antes->toArray(), $archivo->toArray());
+
             $funciones = new Funciones();
-            $funciones->formatoFechaItem($afterUpdated, $dateFields);
-    
-            // Registrar auditoría usando el servicio
-            AuditoriaService::registrarAuditoria('profile', $id, 'UPDATE', $BeforeUpdate, $afterUpdated);
-    
+            $funciones->formatoFechaItem($archivo, ['created_at', 'updated_at']);
+
             DB::commit();
-            return $this->successResponse($afterUpdated, 'Se modificó con éxito');
-    
+            return $this->successResponse($archivo, 'Se modificó con éxito');
         } catch (Exception $e) {
             DB::rollBack();
             return $this->errorResponse($e->getMessage(), 500);
         }
     }
 
-    public function deleteMenu(Request $request, $id){
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    // "Eliminar" no borra: marca deleted_at (SoftDeletes) en el elemento y en
+    // todo lo que cuelga de él, como al mandar una carpeta a la papelera de
+    // Windows. Desde la papelera se restaura (con su contenido) o se borra de
+    // verdad. Las consultas normales (árbol, hijos) no ven lo que está en la
+    // papelera porque el modelo lleva SoftDeletes.
+
+    /**
+     * Envía un archivo o carpeta a la papelera, con todo su contenido.
+     */
+    public function deleteArchivo(Request $request, $id){
+        DB::beginTransaction();
+
         try {
-            $data = DB::transaction(function () use ($request, $id) {
-                // Buscar el menú por su ID
-                $menu = Menu::findOrFail($id);
-                
-                // Verificar si el menú tiene hijos
-                $hasChildren = Menu::where('parent', $menu->id)->exists();
-                if ($hasChildren) {
-                    throw new Exception('No se puede eliminar este menú porque tiene hijos.');
-                }
-    
-                $menu->access()->delete();                
-                $menu->delete();
-                
-                // Registrar auditoría para la eliminación del menú (descomenta esta línea si necesitas registrar la auditoría)
-                AuditoriaService::registrarAuditoria('menu', $menu->id, 'DELETE', $menu, null);
-                
-                return $menu;
-            });
-    
-            return $this->successResponse($data, 'Se eliminó con éxito');
+            $archivo = Archivo::findOrFail($id);
+            $ids     = $this->idsDelSubarbol($archivo->id, false);   // él y sus descendientes vivos
+
+            Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true]);
+
+            $this->auditar('DELETE', $archivo->id, $archivo->toArray(), [
+                'papelera' => true,
+                'elementos_enviados' => count($ids),
+            ]);
+
+            DB::commit();
+            $mensaje = count($ids) > 1
+                ? 'Se enviaron ' . count($ids) . ' elementos a la papelera'
+                : 'Se envió a la papelera';
+            return $this->successResponse(['enviados' => count($ids)], $mensaje);
         } catch (Exception $e) {
-            return $this->errorResponse($e->getMessage(), 400);
-        }    
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Contenido de la papelera, más reciente primero. Cada elemento lleva
+     * `ruta`: dónde estaba (nombres de sus antecesores), para saber a dónde
+     * volvería al restaurarlo.
+     */
+    public function papelera(){
+        try {
+            $funciones = new Funciones();
+            $todos = Archivo::withTrashed()->get()->keyBy('id');   // para armar las rutas
+
+            $items = Archivo::onlyTrashed()->orderByDesc('deleted_at')->get()
+                ->map(function ($item) use ($todos, $funciones) {
+                    $ruta  = [];
+                    $padre = $item->padre;
+                    while ($padre && isset($todos[$padre])) {
+                        array_unshift($ruta, $todos[$padre]->nombre);
+                        $padre = $todos[$padre]->padre;
+                    }
+                    $item->ruta = $ruta ? implode(' / ', $ruta) : 'Raíz';
+                    $funciones->formatoFechaItem($item, ['created_at', 'updated_at', 'deleted_at']);
+                    return $item;
+                })
+                ->values();
+
+            return $this->successResponse($items, 'La solicitud ha tenido éxito');
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Restaura un elemento de la papelera con su contenido. Si la carpeta en la
+     * que estaba también está en la papelera, se restauran sus antecesores:
+     * si no, quedaría huérfano y no aparecería en el árbol.
+     */
+    public function restaurarArchivo(Request $request, $id){
+        DB::beginTransaction();
+
+        try {
+            $archivo = Archivo::onlyTrashed()->findOrFail($id);
+
+            $ids = $this->idsDelSubarbol($archivo->id, true);   // él y sus descendientes en papelera
+
+            // Antecesores que también estén en la papelera
+            $padre = $archivo->padre;
+            while ($padre) {
+                $p = Archivo::withTrashed()->find($padre);
+                if (!$p) { break; }
+                if ($p->trashed()) { $ids[] = $p->id; }
+                $padre = $p->padre;
+            }
+
+            Archivo::withTrashed()->whereIn('id', $ids)->update(['deleted_at' => null, 'es_eliminado' => false]);
+
+            $this->auditar('RESTORE', $archivo->id, null, ['elementos_restaurados' => count($ids)]);
+
+            DB::commit();
+            return $this->successResponse(['restaurados' => count($ids)], 'Se restauró con éxito');
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Borra de verdad un elemento de la papelera y todo lo que cuelga de él.
+     * No hay vuelta atrás.
+     */
+    public function eliminarDefinitivo(Request $request, $id){
+        DB::beginTransaction();
+
+        try {
+            $archivo = Archivo::onlyTrashed()->findOrFail($id);
+            $ids = $this->idsDelSubarbol($archivo->id, true);
+
+            $this->auditar('DELETE', $archivo->id, $archivo->toArray(), [
+                'definitivo' => true,
+                'elementos_borrados' => count($ids),
+            ]);
+
+            Archivo::withTrashed()->whereIn('id', $ids)->forceDelete();
+
+            DB::commit();
+            return $this->successResponse(['borrados' => count($ids)], 'Se eliminó definitivamente');
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Borra de verdad todo lo que hay en la papelera. */
+    public function vaciarPapelera(){
+        DB::beginTransaction();
+
+        try {
+            $items = Archivo::onlyTrashed()->get();
+            foreach ($items as $item) {
+                $this->auditar('DELETE', $item->id, $item->toArray(), ['definitivo' => true, 'vaciar_papelera' => true]);
+            }
+            $borrados = Archivo::onlyTrashed()->forceDelete();
+
+            DB::commit();
+            return $this->successResponse(['borrados' => $borrados], 'Papelera vaciada');
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // AUXILIARES
+    // ================================================================
+
+    /**
+     * Ids de un elemento y de todos sus descendientes.
+     * @param bool $enPapelera true = sólo los que están en la papelera;
+     *                         false = sólo los vivos.
+     */
+    private function idsDelSubarbol(int $id, bool $enPapelera): array {
+        $ids = [$id];
+        $pendientes = [$id];
+        while ($pendientes) {
+            $consulta = $enPapelera ? Archivo::onlyTrashed() : Archivo::query();
+            $hijos = $consulta->whereIn('padre', $pendientes)->pluck('id')->all();
+            $ids = array_merge($ids, $hijos);
+            $pendientes = $hijos;
+        }
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * Registro en auditoria.auditoria a través del servicio. Antes se llamaba
+     * a AuditoriaService::registrarAuditoria(), un método estático que no
+     * existe: cada alta fallaba con "Call to undefined method" y hacía
+     * rollback. La tabla se registra como 'archivo', que es lo que consulta
+     * el modal de auditoría del front.
+     */
+    private function auditar(string $operacion, int $id, ?array $antes, ?array $despues): void {
+        (new AuditoriaService())->registrar('archivo', $id, $operacion, $antes, $despues);
     }
 }

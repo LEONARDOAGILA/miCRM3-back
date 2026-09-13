@@ -17,14 +17,16 @@ Route::group([
 ], function () {
     Route::get('allArchivos', [ArchivoController::class, 'allArchivos']);
     Route::get('getArchivoTree', [ArchivoController::class, 'getArchivoTree']);
+    Route::get('findByIdArchivo/{id}', [ArchivoController::class, 'findByIdArchivo']);
     Route::post('addArchivo', [ArchivoController::class, 'addArchivo']);
+    Route::post('editArchivo/{id}', [ArchivoController::class, 'editArchivo']);
+    Route::delete('deleteArchivo/{id}', [ArchivoController::class, 'deleteArchivo']);   // a la papelera
 
-
-    // Route::get('send_email', [EmailController::class, 'send_email']);
-    // Route::get('findByIdMenu/{id}', [MenuController::class, 'findByIdMenu']);
-
-    // Route::post('editMenu/{id}', [MenuController::class, 'editMenu']);
-    // Route::delete('deleteMenu/{id}', [MenuController::class, 'deleteMenu']);
+    // Papelera de reciclaje (borrado lógico)
+    Route::get('papelera', [ArchivoController::class, 'papelera']);
+    Route::post('restaurarArchivo/{id}', [ArchivoController::class, 'restaurarArchivo']);
+    Route::delete('eliminarDefinitivo/{id}', [ArchivoController::class, 'eliminarDefinitivo']);
+    Route::delete('vaciarPapelera', [ArchivoController::class, 'vaciarPapelera']);
 });
 
 
