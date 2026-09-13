@@ -32,7 +32,7 @@ return [
     //'allowed_headers' => ['Authorization', 'Content-Type', 'Custom-Header', '*'],
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    'exposed_headers' => ['Content-Disposition'],   // nombre de fichero en descargas (descargarArchivo)
 
     'max_age' => 0,
 

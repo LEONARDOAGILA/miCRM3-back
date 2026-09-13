@@ -25,6 +25,7 @@ class Archivo extends Model{
         'escarpeta'    => 'boolean',
         'activo'       => 'boolean',
         'nueva_ventana' => 'boolean',
+        'proteger_url'  => 'boolean',
         'es_eliminado' => 'boolean',
     ];
 
@@ -41,6 +42,7 @@ class Archivo extends Model{
         'icono' ,
         'activo' ,
         'nueva_ventana' ,
+        'proteger_url' ,
         'tamano' ,
         'escarpeta' ,
         'color' 

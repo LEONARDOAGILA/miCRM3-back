@@ -18,6 +18,7 @@ Route::group([
     Route::get('allArchivos', [ArchivoController::class, 'allArchivos']);
     Route::get('getArchivoTree', [ArchivoController::class, 'getArchivoTree']);
     Route::get('findByIdArchivo/{id}', [ArchivoController::class, 'findByIdArchivo']);
+    Route::get('descargarArchivo/{id}', [ArchivoController::class, 'descargarArchivo']);   // fichero subido, como adjunto (descarga)
     Route::post('addArchivo', [ArchivoController::class, 'addArchivo']);
     Route::post('subirArchivo', [ArchivoController::class, 'subirArchivo']);   // fichero físico, antes de crear el registro
     Route::post('editArchivo/{id}', [ArchivoController::class, 'editArchivo']);

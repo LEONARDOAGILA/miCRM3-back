@@ -176,6 +176,7 @@ class ArchivoController extends Controller
                     'escarpeta' => 'required|boolean',
                     'activo' => 'nullable|boolean',
                     'nueva_ventana' => 'nullable|boolean',
+                    'proteger_url' => 'nullable|boolean',
                 ]);
 
                 // Procesa los datos y crea uno nuevo
@@ -194,6 +195,7 @@ class ArchivoController extends Controller
                 $archivo->tamano = $validatedData['tamano'] ?? null;
                 $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
                 $archivo->nueva_ventana = $validatedData['nueva_ventana'] ?? false;   // abrir en otra pestaña
+                $archivo->proteger_url = $validatedData['proteger_url'] ?? true;   // sin "abrir en pestaña" ni descarga (por defecto, como la columna)
                 $archivo->save(); // Guarda
                 // Registrar auditoría
                 $this->auditar('INSERT', $archivo->id, null, $archivo->toArray());
@@ -256,6 +258,7 @@ class ArchivoController extends Controller
                 'tamano'      => 'nullable|numeric',
                 'activo'      => 'nullable|boolean',
                 'nueva_ventana' => 'nullable|boolean',   // abrir el enlace en otra pestaña del navegador
+                'proteger_url'  => 'nullable|boolean',   // ocultar la url: sin abrir en pestaña ni descargar
             ]);
 
             $archivo = Archivo::findOrFail($id);
@@ -517,6 +520,50 @@ class ArchivoController extends Controller
         } catch (Exception $e) {
             return $this->errorResponse($e->getMessage(), 500);
         }
+    }
+
+    /**
+     * Entrega un fichero subido como ADJUNTO (Content-Disposition: attachment),
+     * para que el navegador lo descargue en vez de abrirlo.
+     *
+     * Hace falta porque el front y el back están en orígenes distintos y el
+     * atributo `download` de un <a> sólo funciona en la misma origen: con la
+     * url directa de storage el navegador abría el fichero en otra pestaña.
+     * El nombre de descarga es el nombre del registro + la extensión real, no
+     * el nombre interno con fecha y aleatorio.
+     *
+     * Va con token como el resto del grupo: el front lo pide con HttpClient
+     * (responseType blob) y dispara la descarga desde memoria.
+     */
+    public function descargarArchivo($id){
+        $archivo = Archivo::find($id);
+        if (!$archivo || $archivo->escarpeta) {
+            return $this->errorResponse('No existe el archivo', 404);
+        }
+
+        if ($archivo->proteger_url) {
+            // El front ya no muestra el botón; esto cubre la llamada directa
+            return $this->errorResponse('Este archivo está protegido: sólo se puede ver dentro del sistema', 403);
+        }
+
+        $url     = (string) $archivo->url;
+        $prefijo = 'storage/' . self::CARPETA_SUBIDAS . '/';
+        if (!str_starts_with($url, $prefijo)) {
+            // Un enlace externo no se descarga desde aquí
+            return $this->errorResponse('Este archivo es un enlace, no un fichero subido', 422);
+        }
+
+        $rutaDisco = substr($url, strlen('storage/'));   // img/file-manager/<fichero>
+        if (!Storage::disk('public')->exists($rutaDisco)) {
+            return $this->errorResponse('El fichero ya no está en el servidor', 404);
+        }
+
+        $extension = pathinfo($rutaDisco, PATHINFO_EXTENSION);
+        // Nombre legible y seguro para el navegador (sin / \ : * ? " < > |)
+        $base   = trim(preg_replace('/[\\\\\/:*?"<>|\x00-\x1F]+/', ' ', (string) $archivo->nombre)) ?: 'archivo';
+        $nombre = $base . ($extension !== '' ? '.' . $extension : '');
+
+        return Storage::disk('public')->download($rutaDisco, $nombre);
     }
 
     /**
