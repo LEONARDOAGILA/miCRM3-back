@@ -44,6 +44,7 @@ class Archivo extends Model{
         'nueva_ventana' ,
         'proteger_url' ,
         'tamano' ,
+        'extension_archivo' ,
         'escarpeta' ,
         'color' 
     ];

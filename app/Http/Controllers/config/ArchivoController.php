@@ -52,7 +52,11 @@ class ArchivoController extends Controller
     public function allArchivos(Request $request){
         try {
             $padre   = (int) $request->input('padre', 0);
-            $perPage = max(1, min(100, (int) $request->input('per_page', 10)));
+            // per_page=0 → sin paginar: la carpeta entera (el front filtra y
+            // ordena en ag-Grid). Con un valor, página de 1 a 500 filas.
+            $perPage = (int) $request->input('per_page', 10);
+            $todo    = $perPage <= 0;
+            $perPage = $todo ? 0 : min(500, $perPage);
             $search  = trim((string) $request->input('search', ''));
 
             $base = Archivo::where('padre', $padre);
@@ -67,28 +71,39 @@ class ArchivoController extends Controller
             $carpetas = (clone $base)->where('escarpeta', true)->count();
             $archivos = (clone $base)->where('escarpeta', false)->count();
 
-            $pagina = (clone $base)
+            $consulta = (clone $base)
                 ->orderByDesc('escarpeta')
                 ->orderBy('orden')
-                ->orderBy('nombre')
-                ->paginate($perPage);
+                ->orderBy('nombre');
 
             $funciones = new Funciones();
-            $items = collect($pagina->items())->map(function ($item) use ($funciones) {
+            $formatear = function ($item) use ($funciones) {
                 $funciones->formatoFechaItem($item, ['created_at', 'updated_at']);
                 return $item;
-            })->values();
+            };
 
-            return $this->successResponse([
-                'data' => $items,
-                'meta' => [
+            if ($todo) {
+                $items = $consulta->get()->map($formatear)->values();
+                $meta  = [
+                    'total'        => $items->count(),
+                    'per_page'     => $items->count(),
+                    'current_page' => 1,
+                    'last_page'    => 1,
+                ];
+            } else {
+                $pagina = $consulta->paginate($perPage);
+                $items  = collect($pagina->items())->map($formatear)->values();
+                $meta   = [
                     'total'        => $pagina->total(),
                     'per_page'     => $pagina->perPage(),
                     'current_page' => $pagina->currentPage(),
                     'last_page'    => max(1, $pagina->lastPage()),
-                    'carpetas'     => $carpetas,
-                    'archivos'     => $archivos,
-                ],
+                ];
+            }
+
+            return $this->successResponse([
+                'data' => $items,
+                'meta' => $meta + ['carpetas' => $carpetas, 'archivos' => $archivos],
             ], 'La solicitud ha tenido éxito');
         } catch (Exception $e) {
             return $this->errorResponse($e->getMessage(), 500);
@@ -173,6 +188,7 @@ class ArchivoController extends Controller
                     'color' => 'nullable|string|max:255',
                     'tipo' => 'nullable|string|max:30',
                     'tamano' => 'nullable|numeric',
+                    'extension_archivo' => 'nullable|string|max:10',
                     'escarpeta' => 'required|boolean',
                     'activo' => 'nullable|boolean',
                     'nueva_ventana' => 'nullable|boolean',
@@ -193,6 +209,7 @@ class ArchivoController extends Controller
                 $archivo->escarpeta = $validatedData['escarpeta'];
                 $archivo->tipo = $validatedData['tipo'] ?? 'link';
                 $archivo->tamano = $validatedData['tamano'] ?? null;
+                $archivo->extension_archivo = isset($validatedData['extension_archivo']) ? strtolower($validatedData['extension_archivo']) : null;   // para reportería
                 $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
                 $archivo->nueva_ventana = $validatedData['nueva_ventana'] ?? false;   // abrir en otra pestaña
                 $archivo->proteger_url = $validatedData['proteger_url'] ?? true;   // sin "abrir en pestaña" ni descarga (por defecto, como la columna)
@@ -256,6 +273,7 @@ class ArchivoController extends Controller
                 'color'       => 'nullable|string|max:255',
                 'tipo'        => 'nullable|string|max:30',
                 'tamano'      => 'nullable|numeric',
+                'extension_archivo' => 'nullable|string|max:10',
                 'activo'      => 'nullable|boolean',
                 'nueva_ventana' => 'nullable|boolean',   // abrir el enlace en otra pestaña del navegador
                 'proteger_url'  => 'nullable|boolean',   // ocultar la url: sin abrir en pestaña ni descargar
@@ -271,6 +289,9 @@ class ArchivoController extends Controller
                 $this->borrarFisico($archivo);
             }
 
+            if (array_key_exists('extension_archivo', $validatedData) && $validatedData['extension_archivo'] !== null) {
+                $validatedData['extension_archivo'] = strtolower($validatedData['extension_archivo']);
+            }
             $archivo->fill($validatedData);
             $archivo->save();
 
