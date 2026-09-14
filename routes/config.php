@@ -22,6 +22,7 @@ Route::group([
     Route::post('addArchivo', [ArchivoController::class, 'addArchivo']);
     Route::post('subirArchivo', [ArchivoController::class, 'subirArchivo']);   // fichero físico, antes de crear el registro
     Route::post('editArchivo/{id}', [ArchivoController::class, 'editArchivo']);
+    Route::post('moverArchivo/{id}', [ArchivoController::class, 'moverArchivo']);   // a otra carpeta (o a la raíz)
     Route::delete('deleteArchivo/{id}', [ArchivoController::class, 'deleteArchivo']);   // a la papelera
 
     // Papelera de reciclaje (borrado lógico)

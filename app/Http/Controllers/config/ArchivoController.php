@@ -327,6 +327,83 @@ class ArchivoController extends Controller
     // papelera porque el modelo lleva SoftDeletes.
 
     /**
+     * Mueve un archivo o carpeta (con todo su contenido) a otra carpeta.
+     * Body: { padre: id de la carpeta destino, o 0/null para la raíz }.
+     *
+     * Comprobaciones: el destino existe, está vivo y es carpeta; no es el
+     * propio elemento ni una carpeta que cuelgue de él (crearía un ciclo:
+     * la FK no lo impide). Al mover se recalcula el `nivel` de todo el
+     * subárbol, el `tipo` (UNIDAD ↔ CARPETA si una carpeta entra o sale de
+     * la raíz) y el `orden` (último del destino). Si ya está ahí, no hace nada.
+     */
+    public function moverArchivo(Request $request, $id){
+        DB::beginTransaction();
+
+        try {
+            $this->contextoAuditoria($request);
+            $validatedData = $this->validate($request, [
+                'padre' => 'nullable|integer|min:0',
+            ]);
+
+            $archivo = Archivo::findOrFail($id);
+            $destino = $this->carpetaPadre($validatedData['padre'] ?? null);   // null = raíz
+            $padreNuevo = $destino?->id;
+
+            if ($padreNuevo === $archivo->padre) {
+                DB::rollBack();
+                return $this->successResponse(['movidos' => 0], 'Ya está en esa ubicación');
+            }
+            if ($destino && $destino->id === $archivo->id) {
+                DB::rollBack();
+                return $this->errorResponse('No se puede mover una carpeta dentro de sí misma', 422);
+            }
+            if ($destino && in_array($destino->id, $this->idsDelSubarbol($archivo->id, false), true)) {
+                DB::rollBack();
+                return $this->errorResponse('No se puede mover una carpeta dentro de una de sus subcarpetas', 422);
+            }
+
+            // Último orden entre los nuevos hermanos
+            $archivo->padre = $padreNuevo;
+            $archivo->nivel = $destino ? $destino->nivel + 1 : 0;
+            $archivo->orden = (int) Archivo::hijosDe($padreNuevo)->where('id', '<>', $archivo->id)->max('orden') + 1;
+            $archivo->tipo  = self::tipoRegistro($archivo);
+            $archivo->save();   // auditoría: trigger de la tabla
+
+            // Descendientes: cada uno un nivel más que su padre, en cascada
+            $movidos = 1 + $this->renivelarDescendientes($archivo);
+
+            DB::commit();
+
+            $funciones = new Funciones();
+            $funciones->formatoFechaItem($archivo, ['created_at', 'updated_at']);
+            $mensaje = $movidos > 1
+                ? "Se movió con {$movidos} elementos"
+                : 'Se movió con éxito';
+            return $this->successResponse(['archivo' => $archivo, 'movidos' => $movidos], $mensaje);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return $this->errorResponse(collect($e->errors())->flatten()->first(), 422);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Recalcula el nivel de los descendientes vivos de $nodo. Devuelve cuántos tocó. */
+    private function renivelarDescendientes(Archivo $nodo): int {
+        $n = 0;
+        foreach (Archivo::hijosDe($nodo->id)->get() as $hijo) {
+            $nivel = $nodo->nivel + 1;
+            if ($hijo->nivel !== $nivel) {
+                $hijo->nivel = $nivel;
+                $hijo->save();
+            }
+            $n += 1 + $this->renivelarDescendientes($hijo);
+        }
+        return $n;
+    }
+
+    /**
      * Envía un archivo o carpeta a la papelera, con todo su contenido.
      */
     public function deleteArchivo(Request $request, $id){
