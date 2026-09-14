@@ -347,30 +347,17 @@ class ArchivoController extends Controller
 
             $archivo = Archivo::findOrFail($id);
             $destino = $this->carpetaPadre($validatedData['padre'] ?? null);   // null = raíz
-            $padreNuevo = $destino?->id;
 
-            if ($padreNuevo === $archivo->padre) {
+            if (($destino?->id) === $archivo->padre) {
                 DB::rollBack();
                 return $this->successResponse(['movidos' => 0], 'Ya está en esa ubicación');
             }
-            if ($destino && $destino->id === $archivo->id) {
+            if ($error = $this->porQueNoSePuedeMover($archivo, $destino)) {
                 DB::rollBack();
-                return $this->errorResponse('No se puede mover una carpeta dentro de sí misma', 422);
-            }
-            if ($destino && in_array($destino->id, $this->idsDelSubarbol($archivo->id, false), true)) {
-                DB::rollBack();
-                return $this->errorResponse('No se puede mover una carpeta dentro de una de sus subcarpetas', 422);
+                return $this->errorResponse($error, 422);
             }
 
-            // Último orden entre los nuevos hermanos
-            $archivo->padre = $padreNuevo;
-            $archivo->nivel = $destino ? $destino->nivel + 1 : 0;
-            $archivo->orden = (int) Archivo::hijosDe($padreNuevo)->where('id', '<>', $archivo->id)->max('orden') + 1;
-            $archivo->tipo  = self::tipoRegistro($archivo);
-            $archivo->save();   // auditoría: trigger de la tabla
-
-            // Descendientes: cada uno un nivel más que su padre, en cascada
-            $movidos = 1 + $this->renivelarDescendientes($archivo);
+            $movidos = $this->aplicarMovimiento($archivo, $destino);
 
             DB::commit();
 
@@ -387,6 +374,123 @@ class ArchivoController extends Controller
             DB::rollBack();
             return $this->errorResponse($e->getMessage(), 500);
         }
+    }
+
+    /**
+     * Mueve varios elementos a la vez a la misma carpeta (o a la raíz), en
+     * una sola transacción: si uno no se puede mover, no se mueve ninguno.
+     * Body: { ids: [..], padre: id | 0 }.
+     * Los que ya estén en el destino se saltan (no es error).
+     */
+    public function moverArchivos(Request $request){
+        DB::beginTransaction();
+
+        try {
+            $this->contextoAuditoria($request);
+            $validatedData = $this->validate($request, [
+                'ids'   => 'required|array|min:1',
+                'ids.*' => 'integer|distinct',
+                'padre' => 'nullable|integer|min:0',
+            ]);
+
+            $destino  = $this->carpetaPadre($validatedData['padre'] ?? null);
+            $archivos = Archivo::whereIn('id', $validatedData['ids'])->get();
+            if ($archivos->count() !== count($validatedData['ids'])) {
+                DB::rollBack();
+                return $this->errorResponse('Alguno de los elementos ya no existe o está en la papelera', 404);
+            }
+
+            $movidos = 0; $saltados = 0;
+            foreach ($archivos as $archivo) {
+                if (($destino?->id) === $archivo->padre) { $saltados++; continue; }
+                if ($error = $this->porQueNoSePuedeMover($archivo, $destino)) {
+                    DB::rollBack();
+                    return $this->errorResponse("«{$archivo->nombre}»: {$error}", 422);
+                }
+                $movidos += $this->aplicarMovimiento($archivo, $destino);
+            }
+
+            DB::commit();
+            $n = $archivos->count() - $saltados;
+            $mensaje = $n === 0
+                ? 'Ya estaban en esa ubicación'
+                : "Se movieron {$n} " . ($n === 1 ? 'elemento' : 'elementos') . ($movidos > $n ? " ({$movidos} con su contenido)" : '');
+            return $this->successResponse(['movidos' => $movidos, 'saltados' => $saltados], $mensaje);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return $this->errorResponse(collect($e->errors())->flatten()->first(), 422);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Envía varios elementos (con su contenido) a la papelera de una vez.
+     * Body: { ids: [..] }. Una sola transacción.
+     */
+    public function eliminarArchivos(Request $request){
+        DB::beginTransaction();
+
+        try {
+            $this->contextoAuditoria($request);
+            $validatedData = $this->validate($request, [
+                'ids'   => 'required|array|min:1',
+                'ids.*' => 'integer|distinct',
+            ]);
+
+            $ids = [];
+            foreach ($validatedData['ids'] as $id) {
+                $archivo = Archivo::findOrFail($id);
+                $ids = array_merge($ids, $this->idsDelSubarbol($archivo->id, false));
+            }
+            $ids = array_values(array_unique($ids));
+
+            // El trigger de la tabla audita cada fila (UPDATE de deleted_at)
+            Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true]);
+
+            DB::commit();
+            $n = count($validatedData['ids']);
+            $mensaje = count($ids) > $n
+                ? "Se enviaron {$n} elementos a la papelera (" . count($ids) . ' con su contenido)'
+                : "Se enviaron {$n} " . ($n === 1 ? 'elemento' : 'elementos') . ' a la papelera';
+            return $this->successResponse(['enviados' => count($ids)], $mensaje);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return $this->errorResponse(collect($e->errors())->flatten()->first(), 422);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Motivo por el que $archivo no puede ir dentro de $destino; null si puede. */
+    private function porQueNoSePuedeMover(Archivo $archivo, ?Archivo $destino): ?string {
+        if (!$destino) { return null; }
+        if ($destino->id === $archivo->id) {
+            return 'no se puede mover una carpeta dentro de sí misma';
+        }
+        if (in_array($destino->id, $this->idsDelSubarbol($archivo->id, false), true)) {
+            return 'no se puede mover una carpeta dentro de una de sus subcarpetas';
+        }
+        return null;
+    }
+
+    /**
+     * Cambia el padre de $archivo (ya validado): nivel, orden (último del
+     * destino), tipo (UNIDAD ↔ CARPETA) y renivela sus descendientes.
+     * Devuelve cuántos registros tocó (él + descendientes).
+     */
+    private function aplicarMovimiento(Archivo $archivo, ?Archivo $destino): int {
+        $padreNuevo = $destino?->id;
+        $archivo->padre = $padreNuevo;
+        $archivo->nivel = $destino ? $destino->nivel + 1 : 0;
+        $archivo->orden = (int) Archivo::hijosDe($padreNuevo)->where('id', '<>', $archivo->id)->max('orden') + 1;
+        $archivo->tipo  = self::tipoRegistro($archivo);
+        $archivo->save();   // auditoría: trigger de la tabla
+
+        // Descendientes: cada uno un nivel más que su padre, en cascada
+        return 1 + $this->renivelarDescendientes($archivo);
     }
 
     /** Recalcula el nivel de los descendientes vivos de $nodo. Devuelve cuántos tocó. */
