@@ -13,7 +13,6 @@ use App\Http\Resources\Funciones;
 use App\Http\Resources\ApiResponder;
 
 
-use App\Services\AuditoriaService;
 use App\Models\Archivo;
 
 class ArchivoController extends Controller
@@ -36,7 +35,7 @@ class ArchivoController extends Controller
      * Contenido de una carpeta, paginado en servidor.
      *
      * Parámetros (query string):
-     *   padre     id de la carpeta; 0 o ausente = raíz
+     *   padre     id de la carpeta; 0, vacío o ausente = raíz (padre IS NULL)
      *   page      página (desde 1)
      *   per_page  filas por página (1-100, por defecto 10)
      *   search    filtra por nombre o descripción dentro de esa carpeta
@@ -51,7 +50,7 @@ class ArchivoController extends Controller
      */
     public function allArchivos(Request $request){
         try {
-            $padre   = (int) $request->input('padre', 0);
+            $padre   = (int) $request->input('padre', 0) ?: null;   // null = raíz
             // per_page=0 → sin paginar: la carpeta entera (el front filtra y
             // ordena en ag-Grid). Con un valor, página de 1 a 500 filas.
             $perPage = (int) $request->input('per_page', 10);
@@ -59,7 +58,7 @@ class ArchivoController extends Controller
             $perPage = $todo ? 0 : min(500, $perPage);
             $search  = trim((string) $request->input('search', ''));
 
-            $base = Archivo::where('padre', $padre);
+            $base = Archivo::hijosDe($padre);
             if ($search !== '') {
                 $base->where(function ($q) use ($search) {
                     $q->where('nombre', 'ILIKE', "%{$search}%")
@@ -111,8 +110,9 @@ class ArchivoController extends Controller
     }
 
     public function getArchivoTree(){
-        $archivoTree = Archivo::where('padre', 0)
-                        ->orderBy('orden') // Ordenar el primer nivel por 'order2'
+        $archivoTree = Archivo::raices()               // padre IS NULL
+                        ->orderBy('orden')
+                        ->orderBy('nombre')
                         ->with('children') // Cargar los hijos recursivamente
                         ->get();
 
@@ -169,23 +169,30 @@ class ArchivoController extends Controller
 
     
 
+    /**
+     * Alta de carpeta o archivo. `padre` 0/vacío = raíz (se graba NULL); si
+     * viene un id, tiene que ser una carpeta viva: la FK de la tabla ya
+     * impide apuntar a un id inexistente, pero la validación da un mensaje
+     * claro en vez del error de integridad. El nivel se calcula del padre,
+     * no se confía en el que mande el front.
+     */
     public function addArchivo(Request $request){
         DB::beginTransaction();
 
         try {
             $exitoso = null;
+                $this->contextoAuditoria($request);
 
-                // Valida los datos (puedes usar la validación de Laravel, por ejemplo)
+                // Longitudes = las de core.archivos
                 $validatedData = $this->validate($request, [
-                    'padre' => 'nullable|integer',
+                    'padre' => 'nullable|integer|min:0',
                     'orden' => 'nullable|integer',
-                    'nivel' => 'nullable|integer',
-                    'nombre' => 'required|string|max:255',
-                    'url' => 'nullable|string|max:500',
-                    'descripcion' => 'nullable|string',
-                    'modulo' => 'nullable|string|max:255',
-                    'icono' => 'nullable|string|max:255',
-                    'color' => 'nullable|string|max:255',
+                    'nombre' => 'required|string|max:100',
+                    'url' => 'nullable|string|max:200',
+                    'descripcion' => 'nullable|string|max:200',
+                    'modulo' => 'nullable|string|max:100',
+                    'icono' => 'nullable|string|max:100',
+                    'color' => 'nullable|string|max:15',
                     'tipo' => 'nullable|string|max:30',
                     'tamano' => 'nullable|numeric',
                     'extension_archivo' => 'nullable|string|max:10',
@@ -195,11 +202,13 @@ class ArchivoController extends Controller
                     'proteger_url' => 'nullable|boolean',
                 ]);
 
+                $padre = $this->carpetaPadre($validatedData['padre'] ?? null);   // null = raíz
+
                 // Procesa los datos y crea uno nuevo
                 $archivo = new Archivo();
-                $archivo->padre = $validatedData['padre'];
-                $archivo->orden = $validatedData['orden'];
-                $archivo->nivel = $validatedData['nivel'];
+                $archivo->padre = $padre?->id;
+                $archivo->orden = $validatedData['orden'] ?? 0;
+                $archivo->nivel = $padre ? ($padre->nivel + 1) : 0;
                 $archivo->nombre = $validatedData['nombre'];
                 $archivo->url = $validatedData['url'];
                 $archivo->descripcion = $validatedData['descripcion'];
@@ -207,15 +216,13 @@ class ArchivoController extends Controller
                 $archivo->icono = $validatedData['icono'];
                 $archivo->color = $validatedData['color'];
                 $archivo->escarpeta = $validatedData['escarpeta'];
-                $archivo->tipo = $validatedData['tipo'] ?? 'link';
                 $archivo->tamano = $validatedData['tamano'] ?? null;
                 $archivo->extension_archivo = isset($validatedData['extension_archivo']) ? strtolower($validatedData['extension_archivo']) : null;   // para reportería
+                $archivo->tipo = self::tipoRegistro($archivo);   // UNIDAD / CARPETA / LINK / ARCHIVO <EXT>
                 $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
                 $archivo->nueva_ventana = $validatedData['nueva_ventana'] ?? false;   // abrir en otra pestaña
                 $archivo->proteger_url = $validatedData['proteger_url'] ?? true;   // sin "abrir en pestaña" ni descarga (por defecto, como la columna)
-                $archivo->save(); // Guarda
-                // Registrar auditoría
-                $this->auditar('INSERT', $archivo->id, null, $archivo->toArray());
+                $archivo->save(); // Guarda (la auditoría la hace el trigger de la tabla)
                 $exitoso = Archivo::orderBy('id', 'desc')->get();
                 // Especificar las propiedades que representan fechas en tu objeto Nota
                 $dateFields = ['created_at', 'updated_at'];
@@ -263,14 +270,17 @@ class ArchivoController extends Controller
         DB::beginTransaction();
 
         try {
+            $this->contextoAuditoria($request);
+
+            // Longitudes = las de core.archivos
             $validatedData = $this->validate($request, [
                 'orden'       => 'nullable|integer',
-                'nombre'      => 'required|string|max:255',
-                'url'         => 'nullable|string|max:500',
-                'descripcion' => 'nullable|string',
-                'modulo'      => 'nullable|string|max:255',
-                'icono'       => 'nullable|string|max:255',
-                'color'       => 'nullable|string|max:255',
+                'nombre'      => 'required|string|max:100',
+                'url'         => 'nullable|string|max:200',
+                'descripcion' => 'nullable|string|max:200',
+                'modulo'      => 'nullable|string|max:100',
+                'icono'       => 'nullable|string|max:100',
+                'color'       => 'nullable|string|max:15',
                 'tipo'        => 'nullable|string|max:30',
                 'tamano'      => 'nullable|numeric',
                 'extension_archivo' => 'nullable|string|max:10',
@@ -280,7 +290,6 @@ class ArchivoController extends Controller
             ]);
 
             $archivo = Archivo::findOrFail($id);
-            $antes   = clone $archivo;
 
             // Si se sustituyó un fichero subido por otro (o por un enlace), el
             // anterior ya no lo referencia nadie: se borra del disco.
@@ -293,9 +302,8 @@ class ArchivoController extends Controller
                 $validatedData['extension_archivo'] = strtolower($validatedData['extension_archivo']);
             }
             $archivo->fill($validatedData);
-            $archivo->save();
-
-            $this->auditar('UPDATE', $archivo->id, $antes->toArray(), $archivo->toArray());
+            $archivo->tipo = self::tipoRegistro($archivo);   // lo decide el registro, no el front
+            $archivo->save();   // auditoría: trigger de la tabla
 
             $funciones = new Funciones();
             $funciones->formatoFechaItem($archivo, ['created_at', 'updated_at']);
@@ -325,15 +333,12 @@ class ArchivoController extends Controller
         DB::beginTransaction();
 
         try {
+            $this->contextoAuditoria($request);
             $archivo = Archivo::findOrFail($id);
             $ids     = $this->idsDelSubarbol($archivo->id, false);   // él y sus descendientes vivos
 
+            // El trigger de la tabla audita cada fila (UPDATE de deleted_at)
             Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true]);
-
-            $this->auditar('DELETE', $archivo->id, $archivo->toArray(), [
-                'papelera' => true,
-                'elementos_enviados' => count($ids),
-            ]);
 
             DB::commit();
             $mensaje = count($ids) > 1
@@ -385,6 +390,7 @@ class ArchivoController extends Controller
         DB::beginTransaction();
 
         try {
+            $this->contextoAuditoria($request);
             $archivo = Archivo::onlyTrashed()->findOrFail($id);
 
             $ids = $this->idsDelSubarbol($archivo->id, true);   // él y sus descendientes en papelera
@@ -398,9 +404,8 @@ class ArchivoController extends Controller
                 $padre = $p->padre;
             }
 
+            // Auditoría: trigger de la tabla (UPDATE por fila)
             Archivo::withTrashed()->whereIn('id', $ids)->update(['deleted_at' => null, 'es_eliminado' => false]);
-
-            $this->auditar('RESTORE', $archivo->id, null, ['elementos_restaurados' => count($ids)]);
 
             DB::commit();
             return $this->successResponse(['restaurados' => count($ids)], 'Se restauró con éxito');
@@ -418,17 +423,15 @@ class ArchivoController extends Controller
         DB::beginTransaction();
 
         try {
+            $this->contextoAuditoria($request);
             $archivo = Archivo::onlyTrashed()->findOrFail($id);
             $ids = $this->idsDelSubarbol($archivo->id, true);
 
-            $this->auditar('DELETE', $archivo->id, $archivo->toArray(), [
-                'definitivo' => true,
-                'elementos_borrados' => count($ids),
-            ]);
-
             // Ficheros subidos: fuera del disco antes de perder la referencia
             Archivo::withTrashed()->whereIn('id', $ids)->get()->each(fn ($a) => $this->borrarFisico($a));
-            Archivo::withTrashed()->whereIn('id', $ids)->forceDelete();
+            // Auditoría: trigger de la tabla (DELETE por fila). Se borran de
+            // hijos a padres para no depender del ON DELETE SET NULL de la FK.
+            Archivo::withTrashed()->whereIn('id', $ids)->orderByDesc('nivel')->get()->each(fn ($a) => $a->forceDelete());
 
             DB::commit();
             return $this->successResponse(['borrados' => count($ids)], 'Se eliminó definitivamente');
@@ -439,16 +442,18 @@ class ArchivoController extends Controller
     }
 
     /** Borra de verdad todo lo que hay en la papelera. */
-    public function vaciarPapelera(){
+    public function vaciarPapelera(Request $request){
         DB::beginTransaction();
 
         try {
-            $items = Archivo::onlyTrashed()->get();
+            $this->contextoAuditoria($request);
+            // De hijos a padres (nivel desc) para no depender del SET NULL de la FK
+            $items = Archivo::onlyTrashed()->orderByDesc('nivel')->get();
             foreach ($items as $item) {
-                $this->auditar('DELETE', $item->id, $item->toArray(), ['definitivo' => true, 'vaciar_papelera' => true]);
                 $this->borrarFisico($item);
+                $item->forceDelete();   // auditoría: trigger de la tabla
             }
-            $borrados = Archivo::onlyTrashed()->forceDelete();
+            $borrados = $items->count();
 
             DB::commit();
             return $this->successResponse(['borrados' => $borrados], 'Papelera vaciada');
@@ -485,7 +490,26 @@ class ArchivoController extends Controller
         'audio'  => ['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'wma', 'opus', 'weba'],
     ];
 
-    /** Tipo (columna `tipo`) que corresponde a una extensión. */
+    /**
+     * Valor de la columna `tipo` de un registro. Lo decide el propio
+     * registro, nunca el front:
+     *   carpeta en la raíz → UNIDAD          carpeta dentro de otra → CARPETA
+     *   fichero subido     → ARCHIVO <EXT>   (ARCHIVO PDF, ARCHIVO MP4…)
+     *   enlace             → LINK
+     * Hay que llamarlo con padre, escarpeta, extension_archivo y url ya puestos.
+     */
+    public static function tipoRegistro(Archivo $a): string {
+        if ($a->escarpeta) {
+            return $a->padre ? 'CARPETA' : 'UNIDAD';
+        }
+        $ext = strtolower(trim((string) $a->extension_archivo));
+        if ($ext === '' && str_starts_with((string) $a->url, 'storage/')) {
+            $ext = strtolower(pathinfo((string) $a->url, PATHINFO_EXTENSION));   // subidas antiguas sin extensión grabada
+        }
+        return $ext !== '' ? 'ARCHIVO ' . strtoupper($ext) : 'LINK';
+    }
+
+    /** Categoría (imagen, pdf, excel…) que corresponde a una extensión; la usa la subida para el front. */
     public static function tipoPorExtension(string $extension): string {
         $ext = strtolower($extension);
         foreach (self::EXTENSIONES as $tipo => $lista) {
@@ -623,13 +647,56 @@ class ArchivoController extends Controller
     }
 
     /**
-     * Registro en auditoria.auditoria a través del servicio. Antes se llamaba
-     * a AuditoriaService::registrarAuditoria(), un método estático que no
-     * existe: cada alta fallaba con "Call to undefined method" y hacía
-     * rollback. La tabla se registra como 'archivo', que es lo que consulta
-     * el modal de auditoría del front.
+     * Carpeta padre para un alta: null si `padre` es 0/null (raíz). Si viene
+     * un id, tiene que existir, estar viva y ser carpeta; si no, se corta con
+     * un mensaje claro (la FK de la tabla ya lo impediría, pero con un error
+     * de integridad ilegible).
      */
-    private function auditar(string $operacion, int $id, ?array $antes, ?array $despues): void {
-        (new AuditoriaService())->registrar('archivo', $id, $operacion, $antes, $despues);
+    private function carpetaPadre(?int $padre): ?Archivo {
+        if (!$padre) { return null; }
+        $carpeta = Archivo::find($padre);
+        if (!$carpeta) {
+            throw new Exception('La carpeta destino no existe o está en la papelera');
+        }
+        if (!$carpeta->escarpeta) {
+            throw new Exception('Sólo se puede crear dentro de una carpeta');
+        }
+        return $carpeta;
+    }
+
+    /**
+     * Deja el usuario, la ip y la petición en el contexto de la sesión de
+     * PostgreSQL (app.*), que es lo que leen los triggers de core.archivos:
+     * trigger_archivos_set_users rellena created_by / updated_by y
+     * trg_archivos_audit graba en auditoria.logs_cambios quién hizo qué.
+     * Es la misma técnica que usan las funciones seguridad.fn_usuarios_*,
+     * sólo que aquí se hace desde PHP porque se trabaja con Eloquent.
+     *
+     * set_config(..., false) = para toda la sesión: Laravel abre una conexión
+     * por petición, así que no se cuela en otra.
+     */
+    private function contextoAuditoria(Request $request): void {
+        $usuario = auth()->user();
+        $login   = $usuario->login_user ?? $usuario->email ?? null;
+        $nombre  = $usuario ? trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) : null;
+
+        DB::statement(
+            "SELECT set_config('app.usuario_id', ?, false),
+                    set_config('app.usuario_login', ?, false),
+                    set_config('app.usuario_nombre', ?, false),
+                    set_config('app.ip_address', ?, false),
+                    set_config('app.user_agent', ?, false),
+                    set_config('app.request_id', ?, false),
+                    set_config('app.modulo', ?, false)",
+            [
+                (string) ($usuario->id ?? ''),
+                (string) ($login ?: ''),
+                (string) ($nombre ?: ''),
+                (string) ($request->ip() ?? ''),
+                (string) ($request->userAgent() ?? ''),
+                (string) Str::uuid(),
+                'core.archivos',
+            ]
+        );
     }
 }
