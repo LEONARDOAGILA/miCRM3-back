@@ -433,6 +433,47 @@ class ArchivoController extends Controller
      * `ruta`: dónde estaba (nombres de sus antecesores), para saber a dónde
      * volvería al restaurarlo.
      */
+    /**
+     * Cuánto ocupan los ficheros subidos y cuánto disco queda, para el pie
+     * del árbol del administrador ("SSD Storage" en la plantilla).
+     *
+     *   subidos      bytes que suman los ficheros subidos vivos (columna tamano)
+     *   subidos_papelera  lo mismo para los que están en la papelera (siguen en disco)
+     *   ficheros / enlaces / carpetas   cuántos hay de cada uno (vivos)
+     *   por_tipo     desglose de bytes y unidades por extensión (ARCHIVO PDF…)
+     *   disco        libre y total del disco donde está storage/app/public
+     */
+    public function almacenamiento(){
+        try {
+            $subidos = fn ($q) => $q->where('escarpeta', false)->where('url', 'like', 'storage/' . self::CARPETA_SUBIDAS . '/%');
+
+            $vivos   = $subidos(Archivo::query());
+            $porTipo = (clone $vivos)
+                ->selectRaw('tipo, count(*) as unidades, coalesce(sum(tamano), 0) as bytes')
+                ->groupBy('tipo')->orderByDesc('bytes')->get()
+                ->map(fn ($r) => ['tipo' => $r->tipo, 'unidades' => (int) $r->unidades, 'bytes' => (float) $r->bytes]);
+
+            $rutaDisco = Storage::disk('public')->path('');
+            $libre = @disk_free_space($rutaDisco);
+            $total = @disk_total_space($rutaDisco);
+
+            return $this->successResponse([
+                'subidos'          => (float) (clone $vivos)->sum('tamano'),
+                'subidos_papelera' => (float) $subidos(Archivo::onlyTrashed())->sum('tamano'),
+                'ficheros'         => (int) (clone $vivos)->count(),
+                'enlaces'          => (int) Archivo::where('escarpeta', false)->where('url', 'not like', 'storage/%')->count(),
+                'carpetas'         => (int) Archivo::where('escarpeta', true)->count(),
+                'por_tipo'         => $porTipo,
+                'disco'            => [
+                    'libre' => $libre !== false ? (float) $libre : null,
+                    'total' => $total !== false ? (float) $total : null,
+                ],
+            ], 'La solicitud ha tenido éxito');
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     public function papelera(){
         try {
             $funciones = new Funciones();

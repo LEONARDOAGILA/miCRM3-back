@@ -26,6 +26,7 @@ Route::group([
     Route::delete('deleteArchivo/{id}', [ArchivoController::class, 'deleteArchivo']);   // a la papelera
 
     // Papelera de reciclaje (borrado lógico)
+    Route::get('almacenamiento', [ArchivoController::class, 'almacenamiento']);   // espacio usado por las subidas + disco
     Route::get('papelera', [ArchivoController::class, 'papelera']);
     Route::post('restaurarArchivo/{id}', [ArchivoController::class, 'restaurarArchivo']);
     Route::delete('eliminarDefinitivo/{id}', [ArchivoController::class, 'eliminarDefinitivo']);
