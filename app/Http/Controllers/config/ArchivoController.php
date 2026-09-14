@@ -790,6 +790,119 @@ class ArchivoController extends Controller
     }
 
     /**
+     * Descarga uno o varios elementos en un .zip. Body: { ids: [..] }.
+     *
+     * Las carpetas entran con toda su estructura (subcarpetas como rutas
+     * dentro del zip). Sólo van los ficheros subidos: los enlaces se
+     * incluyen como accesos directos .url (abren en el navegador) y los
+     * ficheros con proteger_url se omiten (no se pueden descargar). Si al
+     * final no hay nada que meter, 422.
+     *
+     * Nombre del zip: el de la carpeta si es una sola; si no,
+     * "archivos-<fecha>.zip". El fichero temporal se borra tras enviarlo.
+     * Necesita la extensión zip de PHP (ZipArchive).
+     */
+    public function descargarZip(Request $request){
+        try {
+            $validatedData = $this->validate($request, [
+                'ids'   => 'required|array|min:1',
+                'ids.*' => 'integer|distinct',
+            ]);
+            if (!class_exists(\ZipArchive::class)) {
+                return $this->errorResponse('El servidor no tiene la extensión zip de PHP habilitada', 500);
+            }
+
+            $raices = Archivo::whereIn('id', $validatedData['ids'])->get();
+            if ($raices->isEmpty()) {
+                return $this->errorResponse('No existe ninguno de los elementos', 404);
+            }
+
+            $tmp = tempnam(sys_get_temp_dir(), 'micrm3-zip-');
+            $zip = new \ZipArchive();
+            if ($zip->open($tmp, \ZipArchive::OVERWRITE) !== true) {
+                return $this->errorResponse('No se pudo crear el zip', 500);
+            }
+
+            $stats = ['ficheros' => 0, 'enlaces' => 0, 'omitidos' => 0];
+            foreach ($raices as $nodo) {
+                $this->agregarAlZip($zip, $nodo, '', $stats);
+            }
+            $zip->close();
+
+            if ($stats['ficheros'] + $stats['enlaces'] === 0) {
+                @unlink($tmp);
+                return $this->errorResponse(
+                    $stats['omitidos']
+                        ? 'Nada que descargar: los ficheros seleccionados están protegidos'
+                        : 'Nada que descargar: no hay ficheros ni enlaces en la selección',
+                    422
+                );
+            }
+
+            $nombre = $raices->count() === 1 && $raices->first()->escarpeta
+                ? $this->nombreSeguro($raices->first()->nombre)
+                : 'archivos-' . date('Ymd-Hi');
+
+            return response()->download($tmp, $nombre . '.zip', [
+                'Content-Type' => 'application/zip',
+                // Para que el front pueda avisar de lo que se omitió
+                'X-Zip-Ficheros' => $stats['ficheros'],
+                'X-Zip-Enlaces'  => $stats['enlaces'],
+                'X-Zip-Omitidos' => $stats['omitidos'],
+            ])->deleteFileAfterSend(true);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $this->errorResponse(collect($e->errors())->flatten()->first(), 422);
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Mete $nodo en el zip bajo $rutaZip (carpeta padre dentro del zip, ''
+     * en el nivel superior) y baja recursivamente por sus hijos vivos.
+     */
+    private function agregarAlZip(\ZipArchive $zip, Archivo $nodo, string $rutaZip, array &$stats): void {
+        $nombre = $this->nombreSeguro($nodo->nombre);
+
+        if ($nodo->escarpeta) {
+            $carpeta = ($rutaZip === '' ? '' : $rutaZip . '/') . $nombre;
+            $zip->addEmptyDir($carpeta);   // aunque esté vacía, que se vea
+            foreach (Archivo::hijosDe($nodo->id)->orderBy('orden')->orderBy('nombre')->get() as $hijo) {
+                $this->agregarAlZip($zip, $hijo, $carpeta, $stats);
+            }
+            return;
+        }
+
+        $prefijo = ($rutaZip === '' ? '' : $rutaZip . '/');
+        $url     = (string) $nodo->url;
+
+        // Fichero subido
+        if (str_starts_with($url, 'storage/' . self::CARPETA_SUBIDAS . '/')) {
+            if ($nodo->proteger_url) { $stats['omitidos']++; return; }
+            $rutaDisco = substr($url, strlen('storage/'));
+            if (!Storage::disk('public')->exists($rutaDisco)) { $stats['omitidos']++; return; }
+            $ext = pathinfo($rutaDisco, PATHINFO_EXTENSION);
+            $zip->addFile(Storage::disk('public')->path($rutaDisco), $prefijo . $nombre . ($ext !== '' ? '.' . $ext : ''));
+            $stats['ficheros']++;
+            return;
+        }
+
+        // Enlace: acceso directo de Windows (.url), que también abre en Mac/Linux desde el navegador
+        if ($url !== '' && !$nodo->proteger_url) {
+            $zip->addFromString($prefijo . $nombre . '.url', "[InternetShortcut]\r\nURL={$url}\r\n");
+            $stats['enlaces']++;
+            return;
+        }
+        $stats['omitidos']++;
+    }
+
+    /** Nombre válido para fichero/carpeta dentro del zip (sin / \ : * ? " < > |). */
+    private function nombreSeguro(?string $nombre): string {
+        $limpio = trim(preg_replace('/[\\\\\/:*?"<>|\x00-\x1F]+/', ' ', (string) $nombre));
+        return $limpio !== '' ? $limpio : 'archivo';
+    }
+
+    /**
      * Entrega un fichero subido como ADJUNTO (Content-Disposition: attachment),
      * para que el navegador lo descargue en vez de abrirlo.
      *

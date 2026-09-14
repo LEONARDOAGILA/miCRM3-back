@@ -32,7 +32,7 @@ return [
     //'allowed_headers' => ['Authorization', 'Content-Type', 'Custom-Header', '*'],
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => ['Content-Disposition'],   // nombre de fichero en descargas (descargarArchivo)
+    'exposed_headers' => ['Content-Disposition', 'X-Zip-Ficheros', 'X-Zip-Enlaces', 'X-Zip-Omitidos'],   // nombre de fichero y resumen del zip en descargas
 
     'max_age' => 0,
 
