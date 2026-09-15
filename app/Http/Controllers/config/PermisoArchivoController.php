@@ -93,8 +93,115 @@ class PermisoArchivoController extends Controller
                 'directos'  => $directos->values(),
                 'heredados' => $heredados->values(),
                 'puedeAdministrar' => $puedeAdministrar,
+                // Ceder la propiedad: sólo el propietario actual o un administrador (como Google Drive)
+                'puedeTransferir'  => $this->puedeTransferir($archivo),
             ], 'La solicitud ha tenido éxito');
         } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Sólo el propietario actual o un administrador pueden ceder la propiedad. */
+    private function puedeTransferir(Archivo $archivo): bool
+    {
+        return $this->esAdminDeArchivos() || ((int) $archivo->propietario_id === (int) auth()->id());
+    }
+
+    /**
+     * Cede la propiedad a otro usuario (como "Transferir la propiedad" de
+     * Google Drive). Body:
+     *   user_id            nuevo propietario (activo, distinto del actual)
+     *   incluir_contenido  carpetas: también todo lo que cuelga (por defecto true)
+     *   conservar_acceso   el propietario saliente queda con una fila directa
+     *                      de editor (todo menos administrar) para no perder
+     *                      el acceso (por defecto true)
+     * Sólo el propietario actual o un administrador. El trigger de auditoría
+     * de core.archivos deja constancia del cambio de propietario_id.
+     */
+    public function transferirPropietario(Request $request, $id){
+        DB::beginTransaction();
+        try {
+            $this->contextoAuditoria($request, 'core.archivos');
+            $archivo = Archivo::findOrFail($id);
+            if (!$this->puedeTransferir($archivo)) {
+                DB::rollBack();
+                return $this->errorResponse('Sólo el propietario o un administrador pueden ceder la propiedad', 403);
+            }
+
+            $datos = $this->validate($request, [
+                'user_id'           => 'required|integer',
+                'incluir_contenido' => 'nullable|boolean',
+                'conservar_acceso'  => 'nullable|boolean',
+            ]);
+            $nuevoId = (int) $datos['user_id'];
+            $nuevo = DB::table('seguridad.users')->where('id', $nuevoId)->select('id', 'login_user', 'name', 'surname', 'isactive')->first();
+            if (!$nuevo) {
+                DB::rollBack();
+                return $this->errorResponse('El usuario no existe', 422);
+            }
+            if (!$nuevo->isactive) {
+                DB::rollBack();
+                return $this->errorResponse('El usuario está inactivo: no puede ser propietario', 422);
+            }
+            if ($nuevoId === (int) $archivo->propietario_id) {
+                DB::rollBack();
+                return $this->errorResponse('Ese usuario ya es el propietario', 422);
+            }
+
+            $anteriorId       = $archivo->propietario_id ? (int) $archivo->propietario_id : null;
+            $incluirContenido = (bool) ($datos['incluir_contenido'] ?? true);
+            $conservarAcceso  = (bool) ($datos['conservar_acceso'] ?? true);
+
+            // Qué cambia de dueño: el elemento y, si es carpeta y se pide, lo que cuelga
+            // de ella (incluida la papelera, para que no quede huérfano al restaurar)
+            $ids = [(int) $archivo->id];
+            if ($archivo->escarpeta && $incluirContenido) {
+                $ids = collect(DB::select(
+                    'WITH RECURSIVE r AS (
+                        SELECT id FROM core.archivos WHERE id = ?
+                        UNION ALL
+                        SELECT a.id FROM core.archivos a JOIN r ON a.padre = r.id
+                     ) SELECT id FROM r', [$archivo->id]
+                ))->pluck('id')->map(fn ($v) => (int) $v)->all();
+            }
+
+            // Uno a uno con Eloquent para que salte el trigger de auditoría por fila
+            $cambiados = 0;
+            foreach (Archivo::withTrashed()->whereIn('id', $ids)->get() as $a) {
+                if ((int) $a->propietario_id === $nuevoId) { continue; }
+                $a->propietario_id = $nuevoId;
+                $a->save();
+                $cambiados++;
+            }
+
+            // El nuevo propietario ya no necesita su fila directa (tiene todo por ser dueño)
+            PermisoArchivo::whereIn('archivo_id', $ids)->where('user_id', $nuevoId)->delete();
+
+            // El saliente se queda como editor del elemento raíz de la cesión (hereda hacia abajo)
+            if ($conservarAcceso && $anteriorId && $anteriorId !== $nuevoId) {
+                PermisoArchivo::updateOrCreate(
+                    ['archivo_id' => $archivo->id, 'user_id' => $anteriorId],
+                    [
+                        'ver' => true, 'ejecutar' => true, 'descargar' => true, 'crear' => true,
+                        'editar' => true, 'eliminar' => true, 'restaurar' => true, 'administrar' => false,
+                        'hereda' => true, 'denegar' => false, 'vigente_hasta' => null,
+                    ]
+                );
+            }
+
+            DB::commit();
+            $nombre = trim(($nuevo->name ?? '') . ' ' . ($nuevo->surname ?? '')) ?: $nuevo->login_user;
+            return $this->successResponse([
+                'propietario' => ['id' => $nuevo->id, 'login_user' => $nuevo->login_user, 'name' => $nuevo->name, 'surname' => $nuevo->surname],
+                'cambiados'   => $cambiados,
+            ], $cambiados > 1
+                ? "Ahora {$nombre} es propietario de «{$archivo->nombre}» y de {$cambiados} elementos en total"
+                : "Ahora {$nombre} es propietario de «{$archivo->nombre}»");
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->validator->errors()->first(), 422);
+        } catch (Exception $e) {
+            DB::rollBack();
             return $this->errorResponse($e->getMessage(), 500);
         }
     }

@@ -35,6 +35,7 @@ Route::group([
     Route::delete('permisosArchivo/{id}/{userId}', [PermisoArchivoController::class, 'quitar']);
     Route::get('usuariosParaPermisos', [PermisoArchivoController::class, 'usuarios']);               // selector de usuarios ?search=
     Route::get('accesosArchivo/{id}', [PermisoArchivoController::class, 'accesos']);                 // quién abrió / descargó
+    Route::post('transferirPropietario/{id}', [PermisoArchivoController::class, 'transferirPropietario']); // ceder la propiedad { user_id, incluir_contenido, conservar_acceso }
     // Usuario final
     Route::get('misArchivos', [PermisoArchivoController::class, 'misArchivos']);                     // árbol con lo que puede ver
     Route::get('miPermisoArchivo/{id}', [PermisoArchivoController::class, 'miPermiso']);
