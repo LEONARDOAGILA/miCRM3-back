@@ -936,6 +936,7 @@ class ArchivoController extends Controller
             $ext = pathinfo($rutaDisco, PATHINFO_EXTENSION);
             $zip->addFile(Storage::disk('public')->path($rutaDisco), $prefijo . $nombre . ($ext !== '' ? '.' . $ext : ''));
             $stats['ficheros']++;
+            $this->registrarAcceso(request(), (int) $nodo->id, 'DESCARGAR');   // historial: también cuenta dentro del zip
             return;
         }
 

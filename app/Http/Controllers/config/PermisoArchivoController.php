@@ -225,23 +225,66 @@ class PermisoArchivoController extends Controller
         }
     }
 
-    /** Últimos 200 accesos (EJECUTAR / DESCARGAR) a un archivo, para quien administra. */
+    /**
+     * Historial de acciones de un archivo (quién lo abrió o descargó), para
+     * quien administra. Filtros opcionales: accion (EJECUTAR | DESCARGAR),
+     * desde / hasta (Y-m-d, día completo) y limit (por defecto 500). Para una
+     * carpeta se incluyen las acciones sobre todo lo que cuelga de ella.
+     */
     public function accesos(Request $request, $id){
         try {
-            $archivo = Archivo::findOrFail($id);
+            $archivo = Archivo::withTrashed()->findOrFail($id);   // también desde la papelera
             if (!$this->puede('administrar', (int) $archivo->id)) {
-                return $this->errorResponse('No tiene permiso para ver los accesos de este elemento', 403);
+                return $this->errorResponse('No tiene permiso para ver el historial de este elemento', 403);
             }
-            $filas = DB::table('core.archivos_accesos as x')
+            $request->validate([
+                'accion' => 'nullable|in:EJECUTAR,DESCARGAR',
+                'desde'  => 'nullable|date_format:Y-m-d',
+                'hasta'  => 'nullable|date_format:Y-m-d',
+                'limit'  => 'nullable|integer|min:1|max:5000',
+            ]);
+
+            // Carpeta: ella y todos sus descendientes; archivo: sólo él
+            $ids = [(int) $archivo->id];
+            if ($archivo->escarpeta) {
+                $ids = collect(DB::select(
+                    'WITH RECURSIVE r AS (
+                        SELECT id FROM core.archivos WHERE id = ?
+                        UNION ALL
+                        SELECT a.id FROM core.archivos a JOIN r ON a.padre = r.id
+                     ) SELECT id FROM r', [$archivo->id]
+                ))->pluck('id')->map(fn ($v) => (int) $v)->all();
+            }
+
+            $q = DB::table('core.archivos_accesos as x')
                 ->leftJoin('seguridad.users as u', 'u.id', '=', 'x.user_id')
-                ->where('x.archivo_id', $archivo->id)
-                ->orderByDesc('x.created_at')->limit(200)
-                ->get(['x.id', 'x.accion', 'x.usuario_login', 'x.ip_address', 'x.created_at', 'u.name', 'u.surname'])
+                ->leftJoin('core.archivos as a', 'a.id', '=', 'x.archivo_id')
+                ->whereIn('x.archivo_id', $ids);
+            if ($request->filled('accion')) { $q->where('x.accion', $request->accion); }
+            if ($request->filled('desde'))  { $q->where('x.created_at', '>=', $request->desde . ' 00:00:00'); }
+            if ($request->filled('hasta'))  { $q->where('x.created_at', '<=', $request->hasta . ' 23:59:59'); }
+
+            // Totales por acción (sin el límite de filas)
+            $totales = (clone $q)->selectRaw('x.accion, count(*) as n')->groupBy('x.accion')->pluck('n', 'accion');
+
+            $filas = $q->orderByDesc('x.created_at')
+                ->limit((int) ($request->limit ?: 500))
+                ->get(['x.id', 'x.archivo_id', 'a.nombre as archivo_nombre', 'a.tipo as archivo_tipo', 'x.accion', 'x.user_id',
+                       'x.usuario_login', 'x.ip_address', 'x.user_agent', 'x.created_at', 'u.name', 'u.surname'])
                 ->map(function ($f) {
                     $f->fecha = \Carbon\Carbon::parse($f->created_at)->format('Y-m-d H:i:s');
                     return $f;
                 });
-            return $this->successResponse($filas, 'La solicitud ha tenido éxito');
+
+            return $this->successResponse([
+                'filas'   => $filas,
+                'totales' => [
+                    'ejecutar'  => (int) ($totales['EJECUTAR'] ?? 0),
+                    'descargar' => (int) ($totales['DESCARGAR'] ?? 0),
+                ],
+            ], 'La solicitud ha tenido éxito');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return $this->errorResponse($e->validator->errors()->first(), 422);
         } catch (Exception $e) {
             return $this->errorResponse($e->getMessage(), 500);
         }
