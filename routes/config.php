@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\config\ArchivoController;
+use App\Http\Controllers\config\PermisoArchivoController;
 
 use App\Http\Controllers\config\DepartamentoController;
 
@@ -27,6 +28,17 @@ Route::group([
     Route::post('moverArchivos', [ArchivoController::class, 'moverArchivos']);       // varios a la vez { ids[], padre }
     Route::post('eliminarArchivos', [ArchivoController::class, 'eliminarArchivos']); // varios a la papelera { ids[] }
     Route::delete('deleteArchivo/{id}', [ArchivoController::class, 'deleteArchivo']);   // a la papelera
+
+    // Permisos por archivo (por usuario) — PermisoArchivoController
+    Route::get('permisosArchivo/{id}', [PermisoArchivoController::class, 'permisosDe']);              // filas del nodo + heredadas
+    Route::post('permisosArchivo/{id}', [PermisoArchivoController::class, 'guardar']);                // crea/actualiza la fila de un usuario
+    Route::delete('permisosArchivo/{id}/{userId}', [PermisoArchivoController::class, 'quitar']);
+    Route::get('usuariosParaPermisos', [PermisoArchivoController::class, 'usuarios']);               // selector de usuarios ?search=
+    Route::get('accesosArchivo/{id}', [PermisoArchivoController::class, 'accesos']);                 // quién abrió / descargó
+    // Usuario final
+    Route::get('misArchivos', [PermisoArchivoController::class, 'misArchivos']);                     // árbol con lo que puede ver
+    Route::get('miPermisoArchivo/{id}', [PermisoArchivoController::class, 'miPermiso']);
+    Route::post('abrirArchivo/{id}', [PermisoArchivoController::class, 'abrir']);                    // autoriza ejecutar + registra acceso
 
     // Papelera de reciclaje (borrado lógico)
     Route::get('almacenamiento', [ArchivoController::class, 'almacenamiento']);   // espacio usado por las subidas + disco

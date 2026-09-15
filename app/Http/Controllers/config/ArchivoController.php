@@ -14,10 +14,12 @@ use App\Http\Resources\ApiResponder;
 
 
 use App\Models\Archivo;
+use App\Http\Controllers\Concerns\ContextoAuditoria;
+use App\Http\Controllers\Concerns\PermisosDeArchivo;
 
 class ArchivoController extends Controller
 {
-    use ApiResponder;      
+    use ApiResponder, ContextoAuditoria, PermisosDeArchivo;
 
     public function __construct() {
         $this->middleware('auth:api',['except' =>[
@@ -200,9 +202,14 @@ class ArchivoController extends Controller
                     'activo' => 'nullable|boolean',
                     'nueva_ventana' => 'nullable|boolean',
                     'proteger_url' => 'nullable|boolean',
+                    'publico' => 'nullable|boolean',
                 ]);
 
                 $padre = $this->carpetaPadre($validatedData['padre'] ?? null);   // null = raíz
+                if (!$this->puedeCrearEn($padre?->id)) {
+                    DB::rollBack();
+                    return $this->errorResponse($padre ? 'No tiene permiso para crear dentro de esta carpeta' : 'Sólo un administrador puede crear en la raíz', 403);
+                }
 
                 // Procesa los datos y crea uno nuevo
                 $archivo = new Archivo();
@@ -222,6 +229,8 @@ class ArchivoController extends Controller
                 $archivo->activo = $validatedData['activo'] ?? true;   // antes no se grababa y quedaba NULL
                 $archivo->nueva_ventana = $validatedData['nueva_ventana'] ?? false;   // abrir en otra pestaña
                 $archivo->proteger_url = $validatedData['proteger_url'] ?? true;   // sin "abrir en pestaña" ni descarga (por defecto, como la columna)
+                $archivo->publico = $validatedData['publico'] ?? false;   // lo ven todos los usuarios logueados
+                $archivo->propietario_id = auth()->id();                   // quien lo crea tiene todos los permisos
                 $archivo->save(); // Guarda (la auditoría la hace el trigger de la tabla)
                 $exitoso = Archivo::orderBy('id', 'desc')->get();
                 // Especificar las propiedades que representan fechas en tu objeto Nota
@@ -287,9 +296,18 @@ class ArchivoController extends Controller
                 'activo'      => 'nullable|boolean',
                 'nueva_ventana' => 'nullable|boolean',   // abrir el enlace en otra pestaña del navegador
                 'proteger_url'  => 'nullable|boolean',   // ocultar la url: sin abrir en pestaña ni descargar
+                'publico'       => 'nullable|boolean',   // lo ven todos los usuarios logueados
             ]);
 
             $archivo = Archivo::findOrFail($id);
+            if (!$this->puede('editar', (int) $archivo->id)) {
+                DB::rollBack();
+                return $this->errorResponse('No tiene permiso para modificar este elemento', 403);
+            }
+            // `publico` sólo lo cambia quien administra el nodo
+            if (array_key_exists('publico', $validatedData) && !$this->puede('administrar', (int) $archivo->id)) {
+                unset($validatedData['publico']);
+            }
 
             // Si se sustituyó un fichero subido por otro (o por un enlace), el
             // anterior ya no lo referencia nadie: se borra del disco.
@@ -352,6 +370,10 @@ class ArchivoController extends Controller
                 DB::rollBack();
                 return $this->successResponse(['movidos' => 0], 'Ya está en esa ubicación');
             }
+            if (!$this->puedeMoverA((int) $archivo->id, $destino?->id)) {
+                DB::rollBack();
+                return $this->errorResponse('No tiene permiso para mover este elemento a esa carpeta (hace falta editar sobre él y crear en el destino)', 403);
+            }
             if ($error = $this->porQueNoSePuedeMover($archivo, $destino)) {
                 DB::rollBack();
                 return $this->errorResponse($error, 422);
@@ -403,6 +425,10 @@ class ArchivoController extends Controller
             $movidos = 0; $saltados = 0;
             foreach ($archivos as $archivo) {
                 if (($destino?->id) === $archivo->padre) { $saltados++; continue; }
+                if (!$this->puedeMoverA((int) $archivo->id, $destino?->id)) {
+                    DB::rollBack();
+                    return $this->errorResponse("«{$archivo->nombre}»: no tiene permiso para moverlo a esa carpeta", 403);
+                }
                 if ($error = $this->porQueNoSePuedeMover($archivo, $destino)) {
                     DB::rollBack();
                     return $this->errorResponse("«{$archivo->nombre}»: {$error}", 422);
@@ -442,12 +468,16 @@ class ArchivoController extends Controller
             $ids = [];
             foreach ($validatedData['ids'] as $id) {
                 $archivo = Archivo::findOrFail($id);
+                if (!$this->puede('eliminar', (int) $archivo->id)) {
+                    DB::rollBack();
+                    return $this->errorResponse("«{$archivo->nombre}»: no tiene permiso para eliminarlo", 403);
+                }
                 $ids = array_merge($ids, $this->idsDelSubarbol($archivo->id, false));
             }
             $ids = array_values(array_unique($ids));
 
             // El trigger de la tabla audita cada fila (UPDATE de deleted_at)
-            Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true]);
+            Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true, 'deleted_by' => $this->loginActual()]);
 
             DB::commit();
             $n = count($validatedData['ids']);
@@ -516,10 +546,14 @@ class ArchivoController extends Controller
         try {
             $this->contextoAuditoria($request);
             $archivo = Archivo::findOrFail($id);
+            if (!$this->puede('eliminar', (int) $archivo->id)) {
+                DB::rollBack();
+                return $this->errorResponse('No tiene permiso para eliminar este elemento', 403);
+            }
             $ids     = $this->idsDelSubarbol($archivo->id, false);   // él y sus descendientes vivos
 
             // El trigger de la tabla audita cada fila (UPDATE de deleted_at)
-            Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true]);
+            Archivo::whereIn('id', $ids)->update(['deleted_at' => now(), 'es_eliminado' => true, 'deleted_by' => $this->loginActual()]);
 
             DB::commit();
             $mensaje = count($ids) > 1
@@ -548,6 +582,7 @@ class ArchivoController extends Controller
      *   disco        libre y total del disco donde está storage/app/public
      */
     public function almacenamiento(){
+        if (!$this->esAdminDeArchivos()) { return $this->errorResponse('Sólo un administrador puede usar la papelera', 403); }
         try {
             $subidos = fn ($q) => $q->where('escarpeta', false)->where('url', 'like', 'storage/' . self::CARPETA_SUBIDAS . '/%');
 
@@ -578,13 +613,23 @@ class ArchivoController extends Controller
         }
     }
 
+    /**
+     * Contenido de la papelera. Un administrador la ve entera; el resto sólo
+     * lo que puede RESTAURAR (permiso `restaurar`, propio o heredado de la
+     * carpeta donde estaba). Cada elemento trae `ruta` (dónde estaba) y
+     * `puede_restaurar` / `puede_borrar` para que el front pinte los botones.
+     */
     public function papelera(){
         try {
+            $esAdmin   = $this->esAdminDeArchivos();
             $funciones = new Funciones();
             $todos = Archivo::withTrashed()->get()->keyBy('id');   // para armar las rutas
 
             $items = Archivo::onlyTrashed()->orderByDesc('deleted_at')->get()
-                ->map(function ($item) use ($todos, $funciones) {
+                ->filter(fn ($item) => $esAdmin || $this->puedeRestaurar((int) $item->id))
+                ->map(function ($item) use ($todos, $funciones, $esAdmin) {
+                    $item->puede_restaurar = true;
+                    $item->puede_borrar    = $esAdmin;   // borrar definitivamente: sólo administradores
                     $ruta  = [];
                     $padre = $item->padre;
                     while ($padre && isset($todos[$padre])) {
@@ -614,6 +659,10 @@ class ArchivoController extends Controller
         try {
             $this->contextoAuditoria($request);
             $archivo = Archivo::onlyTrashed()->findOrFail($id);
+            if (!$this->puedeRestaurar((int) $archivo->id)) {
+                DB::rollBack();
+                return $this->errorResponse('No tiene permiso para restaurar este elemento', 403);
+            }
 
             $ids = $this->idsDelSubarbol($archivo->id, true);   // él y sus descendientes en papelera
 
@@ -627,7 +676,7 @@ class ArchivoController extends Controller
             }
 
             // Auditoría: trigger de la tabla (UPDATE por fila)
-            Archivo::withTrashed()->whereIn('id', $ids)->update(['deleted_at' => null, 'es_eliminado' => false]);
+            Archivo::withTrashed()->whereIn('id', $ids)->update(['deleted_at' => null, 'es_eliminado' => false, 'deleted_by' => null]);
 
             DB::commit();
             return $this->successResponse(['restaurados' => count($ids)], 'Se restauró con éxito');
@@ -642,6 +691,7 @@ class ArchivoController extends Controller
      * No hay vuelta atrás.
      */
     public function eliminarDefinitivo(Request $request, $id){
+        if (!$this->esAdminDeArchivos()) { return $this->errorResponse('Sólo un administrador puede usar la papelera', 403); }
         DB::beginTransaction();
 
         try {
@@ -665,6 +715,7 @@ class ArchivoController extends Controller
 
     /** Borra de verdad todo lo que hay en la papelera. */
     public function vaciarPapelera(Request $request){
+        if (!$this->esAdminDeArchivos()) { return $this->errorResponse('Sólo un administrador puede usar la papelera', 403); }
         DB::beginTransaction();
 
         try {
@@ -878,7 +929,8 @@ class ArchivoController extends Controller
 
         // Fichero subido
         if (str_starts_with($url, 'storage/' . self::CARPETA_SUBIDAS . '/')) {
-            if ($nodo->proteger_url) { $stats['omitidos']++; return; }
+            // Protegido o sin permiso de descarga para este usuario: fuera del zip
+            if ($nodo->proteger_url || !$this->puede('descargar', (int) $nodo->id)) { $stats['omitidos']++; return; }
             $rutaDisco = substr($url, strlen('storage/'));
             if (!Storage::disk('public')->exists($rutaDisco)) { $stats['omitidos']++; return; }
             $ext = pathinfo($rutaDisco, PATHINFO_EXTENSION);
@@ -915,10 +967,14 @@ class ArchivoController extends Controller
      * Va con token como el resto del grupo: el front lo pide con HttpClient
      * (responseType blob) y dispara la descarga desde memoria.
      */
-    public function descargarArchivo($id){
+    public function descargarArchivo(Request $request, $id){
         $archivo = Archivo::find($id);
         if (!$archivo || $archivo->escarpeta) {
             return $this->errorResponse('No existe el archivo', 404);
+        }
+        // Permiso por usuario (seguridad.fn_permiso_archivo); admin y propietario pasan
+        if (!$this->puede('descargar', (int) $archivo->id)) {
+            return $this->errorResponse('No tiene permiso para descargar este archivo', 403);
         }
 
         if ($archivo->proteger_url) {
@@ -943,6 +999,7 @@ class ArchivoController extends Controller
         $base   = trim(preg_replace('/[\\\\\/:*?"<>|\x00-\x1F]+/', ' ', (string) $archivo->nombre)) ?: 'archivo';
         $nombre = $base . ($extension !== '' ? '.' . $extension : '');
 
+        $this->registrarAcceso($request, (int) $archivo->id, 'DESCARGAR');
         return Storage::disk('public')->download($rutaDisco, $nombre);
     }
 
@@ -999,39 +1056,4 @@ class ArchivoController extends Controller
         return $carpeta;
     }
 
-    /**
-     * Deja el usuario, la ip y la petición en el contexto de la sesión de
-     * PostgreSQL (app.*), que es lo que leen los triggers de core.archivos:
-     * trigger_archivos_set_users rellena created_by / updated_by y
-     * trg_archivos_audit graba en auditoria.logs_cambios quién hizo qué.
-     * Es la misma técnica que usan las funciones seguridad.fn_usuarios_*,
-     * sólo que aquí se hace desde PHP porque se trabaja con Eloquent.
-     *
-     * set_config(..., false) = para toda la sesión: Laravel abre una conexión
-     * por petición, así que no se cuela en otra.
-     */
-    private function contextoAuditoria(Request $request): void {
-        $usuario = auth()->user();
-        $login   = $usuario->login_user ?? $usuario->email ?? null;
-        $nombre  = $usuario ? trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) : null;
-
-        DB::statement(
-            "SELECT set_config('app.usuario_id', ?, false),
-                    set_config('app.usuario_login', ?, false),
-                    set_config('app.usuario_nombre', ?, false),
-                    set_config('app.ip_address', ?, false),
-                    set_config('app.user_agent', ?, false),
-                    set_config('app.request_id', ?, false),
-                    set_config('app.modulo', ?, false)",
-            [
-                (string) ($usuario->id ?? ''),
-                (string) ($login ?: ''),
-                (string) ($nombre ?: ''),
-                (string) ($request->ip() ?? ''),
-                (string) ($request->userAgent() ?? ''),
-                (string) Str::uuid(),
-                'core.archivos',
-            ]
-        );
-    }
 }

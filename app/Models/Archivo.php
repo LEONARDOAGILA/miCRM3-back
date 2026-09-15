@@ -36,6 +36,7 @@ class Archivo extends Model{
         'activo'        => 'boolean',
         'nueva_ventana' => 'boolean',
         'proteger_url'  => 'boolean',
+        'publico'       => 'boolean',
         'es_eliminado'  => 'boolean',
     ];
 
@@ -52,6 +53,8 @@ class Archivo extends Model{
         'activo' ,
         'nueva_ventana' ,
         'proteger_url' ,
+        'deleted_by' ,
+        'publico' ,
         'tamano' ,
         'extension_archivo' ,
         'escarpeta' ,
