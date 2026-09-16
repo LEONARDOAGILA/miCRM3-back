@@ -26,6 +26,7 @@ Route::group([
     Route::post('editArchivo/{id}', [ArchivoController::class, 'editArchivo']);
     Route::post('moverArchivo/{id}', [ArchivoController::class, 'moverArchivo']);   // a otra carpeta (o a la raíz)
     Route::post('moverArchivos', [ArchivoController::class, 'moverArchivos']);       // varios a la vez { ids[], padre }
+    Route::post('reordenarArchivos', [ArchivoController::class, 'reordenarArchivos']); // orden manual entre hermanos { ids[], antes_de, padre }
     Route::post('eliminarArchivos', [ArchivoController::class, 'eliminarArchivos']); // varios a la papelera { ids[] }
     Route::delete('deleteArchivo/{id}', [ArchivoController::class, 'deleteArchivo']);   // a la papelera
 

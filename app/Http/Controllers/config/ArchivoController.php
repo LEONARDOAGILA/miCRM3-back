@@ -511,6 +511,79 @@ class ArchivoController extends Controller
      * destino), tipo (UNIDAD ↔ CARPETA) y renivela sus descendientes.
      * Devuelve cuántos registros tocó (él + descendientes).
      */
+    /**
+     * Reordena hermanos (columna `orden`) al arrastrar dentro de la misma
+     * carpeta. Body:
+     *   ids[]     lo que se movió (deben ser hijos de `padre`)
+     *   antes_de  id del hermano delante del cual se colocan; null = al final
+     *   padre     carpeta (0 / null = raíz)
+     * Se recalcula el orden de TODOS los hermanos (1..N) con las carpetas
+     * primero, que es como se listan: así el número refleja lo que se ve y
+     * funciona aunque quien arrastra sólo vea parte de la carpeta (Mis
+     * archivos). Hace falta `editar` sobre lo que se mueve.
+     */
+    public function reordenarArchivos(Request $request){
+        DB::beginTransaction();
+        try {
+            $this->contextoAuditoria($request);
+            $datos = $this->validate($request, [
+                'ids'      => 'required|array|min:1',
+                'ids.*'    => 'integer|distinct',
+                'antes_de' => 'nullable|integer',
+                'padre'    => 'nullable|integer|min:0',
+            ]);
+            $padreId = !empty($datos['padre']) ? (int) $datos['padre'] : null;
+            $antesDe = !empty($datos['antes_de']) ? (int) $datos['antes_de'] : null;
+            $movidos = array_map('intval', $datos['ids']);
+
+            // Hermanos tal como se listan: carpetas primero, luego por orden y nombre
+            $hermanos = Archivo::hijosDe($padreId)
+                ->orderByDesc('escarpeta')->orderBy('orden')->orderBy('nombre')->get();
+            $porId = $hermanos->keyBy('id');
+
+            foreach ($movidos as $id) {
+                if (!$porId->has($id)) {
+                    DB::rollBack();
+                    return $this->errorResponse('Alguno de los elementos no está en esta carpeta', 422);
+                }
+                if (!$this->puede('editar', $id)) {
+                    DB::rollBack();
+                    return $this->errorResponse("«{$porId[$id]->nombre}»: no tiene permiso para moverlo", 403);
+                }
+            }
+            if ($antesDe !== null && (!$porId->has($antesDe) || in_array($antesDe, $movidos, true))) {
+                $antesDe = null;   // referencia inválida (o es uno de los movidos): al final
+            }
+
+            // Quitar los movidos, insertarlos delante de `antes_de` (o al final)…
+            $resto = $hermanos->reject(fn ($a) => in_array((int) $a->id, $movidos, true))->values();
+            $bloque = collect($movidos)->map(fn ($id) => $porId[$id]);
+            $pos = $antesDe === null ? $resto->count() : $resto->search(fn ($a) => (int) $a->id === $antesDe);
+            $nuevo = $resto->slice(0, $pos)->concat($bloque)->concat($resto->slice($pos))->values();
+
+            // …y carpetas primero (partición estable), como se muestran
+            $nuevo = $nuevo->filter(fn ($a) => $a->escarpeta)->concat($nuevo->reject(fn ($a) => $a->escarpeta))->values();
+
+            $cambiados = 0;
+            foreach ($nuevo as $i => $a) {
+                if ((int) $a->orden !== $i + 1) {
+                    $a->orden = $i + 1;
+                    $a->save();   // auditoría: trigger de la tabla
+                    $cambiados++;
+                }
+            }
+
+            DB::commit();
+            return $this->successResponse(['cambiados' => $cambiados], 'Orden actualizado');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            DB::rollBack();
+            return $this->errorResponse(collect($e->errors())->flatten()->first(), 422);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     private function aplicarMovimiento(Archivo $archivo, ?Archivo $destino): int {
         $padreNuevo = $destino?->id;
         $archivo->padre = $padreNuevo;
