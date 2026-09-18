@@ -72,6 +72,7 @@ Route::group([
     Route::get('findByIdMenu/{id}', [MenuController::class, 'findByIdMenu']);
     Route::post('addMenu', [MenuController::class, 'addMenu']);
     Route::post('editMenu/{id}', [MenuController::class, 'editMenu']);
+    Route::post('moverMenu/{id}', [MenuController::class, 'moverMenu']);   // arrastrar y soltar: { padre_id, antes_de }
     Route::delete('deleteMenu/{id}', [MenuController::class, 'deleteMenu']);
 });
 

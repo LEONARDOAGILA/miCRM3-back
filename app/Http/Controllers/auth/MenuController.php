@@ -235,6 +235,61 @@ class MenuController extends Controller
         }
     }
 
+    /**
+     * Mover un menú (arrastrar y soltar en el listado): a otro padre y/o a
+     * otra posición entre sus hermanos. Body: { padre_id (null = raíz),
+     * antes_de (id del hermano delante del cual va; null = al final) }.
+     * Todo lo hace seguridad.fn_menus_mover (ciclos, nivel máximo, niveles
+     * de los descendientes, renumerar el orden) con el contexto de auditoría.
+     */
+    public function moverMenu(Request $request, $id)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'padre_id' => 'nullable|integer',
+                'antes_de' => 'nullable|integer',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 400);
+            }
+            $datos = $validator->validated();
+
+            $usuario = auth('api')->user();
+            $result = DB::selectOne('
+                SELECT seguridad.fn_menus_mover(
+                    ?::BIGINT,    -- p_id
+                    ?::BIGINT,    -- p_padre_id
+                    ?::BIGINT,    -- p_antes_de
+                    ?::BIGINT,    -- p_usuario_id
+                    ?::VARCHAR,   -- p_usuario_login
+                    ?::VARCHAR,   -- p_usuario_nombre
+                    ?::INET,      -- p_ip_address
+                    ?::TEXT,      -- p_user_agent
+                    ?::UUID       -- p_request_id
+                ) as result
+            ', [
+                (int) $id,
+                !empty($datos['padre_id']) ? (int) $datos['padre_id'] : null,
+                !empty($datos['antes_de']) ? (int) $datos['antes_de'] : null,
+                $usuario->id ?? null,
+                $usuario->login_user ?? null,
+                trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid(),
+            ]);
+
+            $resultado = json_decode($result->result, true);
+            if ($resultado['success']) {
+                return $this->successResponse($resultado['data'], $resultado['message']);
+            }
+            return $this->errorResponse($resultado['message'], 400);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en moverMenu', ['message' => $e->getMessage(), 'menu_id' => $id, 'data' => $request->all()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     public function deleteMenu(Request $request, $id)
     {
         try {
