@@ -83,6 +83,7 @@ class GrupoController extends Controller
             'es_administrador' => 'nullable|boolean',
             'tipo_acceso'      => 'nullable|string|in:SISTEMA,WEB',
             'activo'           => 'nullable|boolean',
+            'aplicar_usuarios' => 'nullable|boolean',   // sólo al modificar: pone perfil/horario/tipo del grupo a sus usuarios
         ];
     }
 
@@ -217,9 +218,10 @@ class GrupoController extends Controller
             }
             $d = $validator->validated();
 
+            $aplicar = array_key_exists('aplicar_usuarios', $d) && (bool) $d['aplicar_usuarios'];
             $result = DB::selectOne(
-                'SELECT seguridad.fn_grupos_modificar(?::BIGINT, ' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
-                array_merge([(int) $id], $this->parametros($d), $this->auditoria($request))
+                'SELECT seguridad.fn_grupos_modificar(?::BIGINT, ' . self::CASTS_DATOS . ', ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id], $this->parametros($d), [$aplicar ? 'true' : 'false'], $this->auditoria($request))
             );
             $resultado = json_decode($result->result, true);
             sistemaLog('info', 'Grupo actualizado', ['grupo_id' => $id, 'usuario' => $usuarioLogin ?? 'desconocido']);
