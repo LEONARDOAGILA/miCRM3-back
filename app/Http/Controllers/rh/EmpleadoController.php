@@ -37,7 +37,7 @@ class EmpleadoController extends Controller
 
     /** SQLSTATE de las reglas de negocio de rh.fn_empleados_* → código HTTP. */
     private const ERRORES_NEGOCIO = [
-        'P0001' => 422, 'P0002' => 422, 'P0003' => 422, 'P0004' => 422,
+        'P0001' => 422, 'P0002' => 422, 'P0003' => 422, 'P0004' => 422,   // P0001/P0002 también: contactos (obligatorios / prioridad)
         'P0006' => 409, 'P0007' => 409,
         'P0008' => 422, 'P0009' => 422, 'P0010' => 422, 'P0011' => 422, 'P0012' => 422,
         'P0013' => 404,
@@ -334,6 +334,73 @@ class EmpleadoController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en deleteEmpleado', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'empleado_id' => $id]);
             return $this->errorResponse('Ocurrió un error al eliminar el empleado', 500);
+        }
+    }
+
+    // ================================================================
+    // CONTACTOS DE EMERGENCIA (grilla del formulario de empleado)
+    // ================================================================
+
+    public function listContactos($id)
+    {
+        try {
+            $result = DB::selectOne('SELECT rh.fn_contactos_listar(?::BIGINT) as result', [(int) $id]);
+            $resultado = json_decode($result->result, true);
+            return $resultado['success']
+                ? $this->successResponse($resultado['data'], $resultado['message'])
+                : $this->errorResponse($resultado['message'], 500);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en listContactos', ['message' => $e->getMessage(), 'empleado_id' => $id]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Sincroniza la lista completa: { contactos: [{id?, nombres, parentesco,
+     * telefono, telefono_alterno?, email?, prioridad?, activo?}] }. Los que no
+     * vienen se eliminan (lo hace rh.fn_contactos_guardar).
+     */
+    public function guardarContactos(Request $request, $id)
+    {
+        try {
+            $datos = $this->datosDe($request);
+            $validator = Validator::make($datos, [
+                'contactos'                    => 'present|array|max:20',
+                'contactos.*.id'               => 'nullable|integer',
+                'contactos.*.nombres'          => 'required|string|max:100',
+                'contactos.*.parentesco'       => 'required|string|max:50',
+                'contactos.*.telefono'         => 'required|string|max:20',
+                'contactos.*.telefono_alterno' => 'nullable|string|max:20',
+                'contactos.*.email'            => 'nullable|email|max:150',
+                'contactos.*.prioridad'        => 'nullable|integer|min:1|max:99',
+                'contactos.*.activo'           => 'nullable|boolean',
+            ], [
+                'contactos.*.nombres.required'    => 'Cada contacto necesita nombres',
+                'contactos.*.parentesco.required' => 'Cada contacto necesita parentesco',
+                'contactos.*.telefono.required'   => 'Cada contacto necesita teléfono',
+                'contactos.*.email.email'         => 'El correo de un contacto no es válido',
+                'contactos.*.prioridad.min'       => 'La prioridad debe ser 1 o mayor',
+                'contactos.max'                   => 'Máximo 20 contactos por empleado',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+            $contactos = $validator->validated()['contactos'] ?? [];
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_contactos_guardar(?::BIGINT, ?::JSONB, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result',
+                array_merge([(int) $id, json_encode(array_values($contactos))], $this->auditoria($request))
+            );
+            $resultado = json_decode($result->result, true);
+            sistemaLog('info', 'Contactos de emergencia guardados', ['empleado_id' => $id, 'n' => count($contactos)]);
+            return $this->successResponse($resultado['data'], $resultado['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en guardarContactos', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'empleado_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al guardar los contactos', 500);
         }
     }
 
