@@ -60,6 +60,11 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 
+        'rh' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':rh',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
     ];
 
     /**

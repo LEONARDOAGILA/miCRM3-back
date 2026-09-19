@@ -16,7 +16,7 @@ return [
     */
 
     //lpaa -> configura todas las rutas para evitar error de cors
-    'paths' => ['api/*','web/*', 'auth/*', 'config/*', 'reporte/*', 'crm/*', 'broadcasting/auth'   , 'sanctum/csrf-cookie'],
+    'paths' => ['api/*','web/*', 'auth/*', 'config/*', 'reporte/*', 'rh/*', 'crm/*', 'broadcasting/auth'   , 'sanctum/csrf-cookie'],
 
 
 
