@@ -7,6 +7,7 @@ use App\Http\Controllers\auth\ProfileController;
 use App\Http\Controllers\auth\MenuController;
 use App\Http\Controllers\auth\EmailController;
 use App\Http\Controllers\auth\UserController;
+use App\Http\Controllers\auth\GrupoController;
 use App\Http\Controllers\auth\HorarioController;
 use App\Http\Controllers\auth\AuditoriaController;
 
@@ -79,6 +80,18 @@ Route::group([
 
 
 
+// GRUPOS DE USUARIOS (árbol, estilo Active Directory)
+Route::group([
+    'prefix' => 'grupo', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allGrupos', [GrupoController::class, 'allGrupos']);              // ?activos=1 para sólo activos
+    Route::get('findByIdGrupo/{id}', [GrupoController::class, 'findByIdGrupo']);
+    Route::post('addGrupo', [GrupoController::class, 'addGrupo']);
+    Route::post('editGrupo/{id}', [GrupoController::class, 'editGrupo']);
+    Route::delete('deleteGrupo/{id}', [GrupoController::class, 'deleteGrupo']);
+    Route::post('moverGrupo/{id}', [GrupoController::class, 'moverGrupo']);      // { padre_id, antes_de }
+});
+
 // USUARIOS
 Route::group([
     'prefix' => 'user',
@@ -93,6 +106,14 @@ Route::group([
     Route::post('changePasswordLogin/{id}', [UserController::class, 'changePasswordLogin'])->middleware(['jwt.auth', 'usuario.activo']); 
 
     Route::post('addImagen', [UserController::class, 'addImagen'])->middleware(['jwt.auth', 'usuario.activo']); 
+    // Grupos (árbol de usuarios): usuarios de un grupo y arrastrar usuarios a otro grupo
+    Route::get('usuariosPorGrupo', [UserController::class, 'usuariosPorGrupo'])->middleware(['jwt.auth', 'usuario.activo']);   // ?grupo_id&subgrupos&page&per_page&search
+    Route::post('moverGrupo', [UserController::class, 'moverGrupo'])->middleware(['jwt.auth', 'usuario.activo']);             // { ids: [...], grupo_id }
+    // Papelera de reciclaje (borrado lógico: deleteUser manda a la papelera)
+    Route::get('papelera', [UserController::class, 'papelera'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::post('restaurarUsuarios', [UserController::class, 'restaurarUsuarios'])->middleware(['jwt.auth', 'usuario.activo']);     // { ids: [...] }
+    Route::post('eliminarDefinitivo', [UserController::class, 'eliminarDefinitivo'])->middleware(['jwt.auth', 'usuario.activo']);   // { ids: [...] }
+    Route::delete('vaciarPapelera', [UserController::class, 'vaciarPapelera'])->middleware(['jwt.auth', 'usuario.activo']);
     
     // Rutas públicas de recuperación (sin autenticación)
     Route::get('getImagenUsuario/{id}', [UserController::class, 'getImagenUsuario']); 

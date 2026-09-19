@@ -317,7 +317,8 @@ class PermisoArchivoController extends Controller
             $q = trim((string) $request->input('search', ''));
             $consulta = DB::table('seguridad.users')
                 ->select('id', 'login_user', 'name', 'surname', 'type_user', 'isactive', 'avatar')
-                ->where('isactive', true);
+                ->where('isactive', true)
+                ->whereNull('deleted_at');
             if ($q !== '') {
                 $consulta->where(function ($w) use ($q) {
                     $w->where('login_user', 'ILIKE', "%{$q}%")

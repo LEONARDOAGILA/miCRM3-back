@@ -157,7 +157,7 @@ class AuthController extends Controller
                 p.inactividad as perfil_inactividad
              FROM seguridad.users u
              INNER JOIN seguridad.perfiles p ON p.id = u.perfil_id
-             WHERE u.login_user = ?",
+             WHERE u.login_user = ? AND u.deleted_at IS NULL",
             [$login_user]
         );
 

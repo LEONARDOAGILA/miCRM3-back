@@ -40,6 +40,9 @@ class UserController extends Controller
         'P0012' => 422,   // horario obligatorio
         'P0013' => 404,   // el usuario no existe
         'P0014' => 409,   // no se puede eliminar: tiene registros asociados
+        'P0016' => 422,   // grupo inexistente
+        'P0018' => 422,   // no puede enviarse a sí mismo a la papelera
+        'P0019' => 404,   // el usuario no está en la papelera
     ];
 
     public function __construct() {
@@ -158,7 +161,8 @@ class UserController extends Controller
                 // de PostgreSQL lo escribía a fuego como 1 (SUPER USUARIO).
                 'type_user' => 'required|integer|in:1,2,3,4',
                 'perfil_id' => 'nullable|integer',
-                'chorario_id' => 'required|integer'
+                'chorario_id' => 'required|integer',
+                'grupo_id' => 'nullable|integer'
             ]);
             
             if ($validator->fails()) {
@@ -187,6 +191,7 @@ class UserController extends Controller
                     ?::INTEGER,   -- p_type_user
                     ?::INTEGER,   -- p_perfil_id
                     ?::INTEGER,   -- p_chorario_id
+                    ?::BIGINT,    -- p_grupo_id
                     ?::BIGINT,    -- p_usuario_id
                     ?::VARCHAR,   -- p_usuario_login
                     ?::VARCHAR,   -- p_usuario_nombre
@@ -206,6 +211,7 @@ class UserController extends Controller
                 $validatedData['type_user'],
                 $validatedData['perfil_id'] ?? 1,
                 $validatedData['chorario_id'],
+                $validatedData['grupo_id'] ?? null,
                 $usuarioId ? (int)$usuarioId : null,
                 $usuarioLogin,
                 $usuarioNombre,
@@ -277,7 +283,8 @@ class UserController extends Controller
                 'isactive' => 'required|boolean',
                 'type_user' => 'nullable|integer',
                 'perfil_id' => 'nullable|integer',
-                'chorario_id' => 'nullable|integer'
+                'chorario_id' => 'nullable|integer',
+                'grupo_id' => 'nullable|integer'
             ]);
             
             if ($validator->fails()) {
@@ -306,6 +313,7 @@ class UserController extends Controller
                     ?::INTEGER,     -- 9. p_type_user
                     ?::INTEGER,     -- 10. p_perfil_id
                     ?::INTEGER,     -- 11. p_chorario_id
+                    ?::BIGINT,      -- 11b. p_grupo_id (NULL no cambia, 0 sin grupo)
                     ?::BIGINT,      -- 12. p_usuario_id
                     ?::VARCHAR,     -- 13. p_usuario_login
                     ?::VARCHAR,     -- 14. p_usuario_nombre
@@ -325,6 +333,8 @@ class UserController extends Controller
                 $validatedData['type_user'] ?? null,         // 9. p_type_user (¡AGREGADO!)
                 $validatedData['perfil_id'] ?? null,         // 10. p_perfil_id
                 $validatedData['chorario_id'] ?? null,       // 11. p_chorario_id
+                // Si el front manda grupo_id (aunque sea null) se aplica: null → 0 = sin grupo
+                array_key_exists('grupo_id', $data) ? (int)($validatedData['grupo_id'] ?? 0) : null,   // 11b. p_grupo_id
                 $usuarioId,                                  // 12. p_usuario_id
                 $usuarioLogin,                               // 13. p_usuario_login
                 $usuarioNombre,                              // 14. p_usuario_nombre
@@ -404,13 +414,9 @@ class UserController extends Controller
             // 3. Decodificar el resultado
             $resultado = json_decode($result->result, true);
 
-            // 4. Evaluar respuesta
+            // 4. Evaluar respuesta. Es un borrado lógico (papelera): la foto se
+            //    conserva hasta que se elimine definitivamente.
             if ($resultado['success']) {
-                // Eliminar imagen si existe
-                if (!empty($resultado['data']['avatar'])) {
-                    $this->eliminarImagenUsuarioPorNombre($resultado['data']['avatar']);
-                }
-                
                 sistemaLog('info', 'Usuario eliminado exitosamente', [
                     'usuario_id' => $id,
                     'login_user' => $resultado['data']['login_user'] ?? 'desconocido',
@@ -944,6 +950,176 @@ public function addImagen(Request $request)
 
 
 
+    /**
+     * Usuarios de un grupo, para la pantalla árbol de grupos + grilla.
+     *   grupo_id ausente → todos; 0 → sin grupo; n → los del grupo
+     *   subgrupos=1 → también los de los grupos que cuelgan de él
+     * Misma forma de respuesta que allUsers ({data, meta}).
+     */
+    public function usuariosPorGrupo(Request $request)
+    {
+        try {
+            $grupoId   = $request->filled('grupo_id') ? (int) $request->input('grupo_id') : null;
+            $subgrupos = filter_var($request->input('subgrupos', false), FILTER_VALIDATE_BOOLEAN);
+            $page      = (int) $request->input('page', 1);
+            $perPage   = (int) $request->input('per_page', 15);
+            $search    = $request->input('search', '');
+
+            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_por_grupo(?::BIGINT, ?::BOOLEAN, ?, ?, ?) as result', [
+                $grupoId, $subgrupos ? 'true' : 'false', $page, $perPage, $search
+            ]);
+            $resultado = json_decode($result->result, true);
+
+            return $this->successResponse($resultado, 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en usuariosPorGrupo', [
+                'code' => $e->getCode(), 'message' => $e->getMessage(), 'line' => $e->getLine()
+            ]);
+            return $this->errorResponse('Ocurrió un error al listar los usuarios del grupo', 500);
+        }
+    }
+
+    /**
+     * Mueve uno o varios usuarios a un grupo (arrastrar al árbol).
+     * Body: { ids: [..], grupo_id: n | null }  (null = dejarlos sin grupo)
+     */
+    public function moverGrupo(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'ids'      => 'required|array|min:1|max:500',
+                'ids.*'    => 'integer',
+                'grupo_id' => 'nullable|integer',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+            $datos = $validator->validated();
+
+            $usuario = auth('api')->user();
+            $usuarioId = $usuario->id ?? null;
+            $usuarioLogin = $usuario->login_user ?? null;
+            $usuarioNombre = trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null;
+
+            $result = DB::selectOne('
+                SELECT seguridad.fn_usuarios_mover_grupo(
+                    ?::JSONB, ?::BIGINT,
+                    ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID
+                ) as result
+            ', [
+                json_encode(array_map('intval', $datos['ids'])),
+                $datos['grupo_id'] ?? null,
+                $usuarioId ? (int)$usuarioId : null,
+                $usuarioLogin,
+                $usuarioNombre,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid()
+            ]);
+            $resultado = json_decode($result->result, true);
+
+            sistemaLog('info', 'Usuarios movidos de grupo', [
+                'ids' => $datos['ids'], 'grupo_id' => $datos['grupo_id'] ?? null, 'usuario' => $usuarioLogin ?? 'desconocido'
+            ]);
+
+            return $this->successResponse($resultado['data'], $resultado['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'moverGrupo rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()
+            ]);
+            return $this->errorResponse($mensaje, $codigo);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en moverGrupo', [
+                'code' => $e->getCode(), 'message' => $e->getMessage(), 'line' => $e->getLine()
+            ]);
+            return $this->errorResponse('Ocurrió un error al mover los usuarios', 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE (borrado lógico), como la del administrador de archivos
+    // ================================================================
+
+    /** Usuarios que están en la papelera (más reciente primero). */
+    public function papelera()
+    {
+        try {
+            $result = DB::selectOne('SELECT seguridad.fn_usuarios_papelera_listar() as result');
+            $resultado = json_decode($result->result, true);
+            return $this->successResponse($resultado['data'] ?? [], 'La solicitud ha tenido éxito');
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de usuarios', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Restaura uno o varios usuarios de la papelera. Body: { ids: [..] } */
+    public function restaurarUsuarios(Request $request)
+    {
+        return $this->accionPapelera($request, 'seguridad.fn_usuarios_restaurar', 'restaurarUsuarios');
+    }
+
+    /** Borra de verdad uno o varios usuarios de la papelera (y sus fotos). Body: { ids: [..] } */
+    public function eliminarDefinitivo(Request $request)
+    {
+        return $this->accionPapelera($request, 'seguridad.fn_usuarios_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    /** Borra de verdad todo lo que hay en la papelera (y sus fotos). */
+    public function vaciarPapelera(Request $request)
+    {
+        return $this->accionPapelera($request, 'seguridad.fn_usuarios_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /**
+     * Llama a una función de la papelera con el contexto del usuario autenticado.
+     * Las de borrado real devuelven los avatares de los usuarios borrados para
+     * quitar los ficheros del disco una vez confirmada la transacción.
+     */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        $usuario = auth('api')->user();
+        $usuarioId = $usuario->id ?? null;
+        $usuarioLogin = $usuario->login_user ?? null;
+        $usuarioNombre = trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null;
+        try {
+            $auditoria = [$usuarioId ? (int)$usuarioId : null, $usuarioLogin, $usuarioNombre, $request->ip(), $request->userAgent(), (string) Str::uuid()];
+            if ($conIds) {
+                $validator = Validator::make($request->all(), ['ids' => 'required|array|min:1|max:500', 'ids.*' => 'integer']);
+                if ($validator->fails()) {
+                    return $this->errorResponse($validator->errors()->first(), 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result",
+                    array_merge([json_encode(array_map('intval', $validator->validated()['ids']))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}(?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result", $auditoria);
+            }
+            $resultado = json_decode($result->result, true);
+
+            // Ya borrados en la BD: fuera sus fotos
+            foreach ($resultado['data']['avatares'] ?? [] as $avatar) {
+                $this->eliminarImagenUsuarioPorNombre($avatar);
+            }
+
+            sistemaLog('info', "Papelera de usuarios: {$nombre}", ['data' => $resultado['data'] ?? null, 'usuario' => $usuarioLogin ?? 'desconocido']);
+            return $this->successResponse($resultado['data'], $resultado['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado", ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de usuarios', 500);
+        }
+    }
+
     public function listUsers()
     {
         try {
@@ -996,7 +1172,7 @@ public function verificarUsuarioRecuperacion(Request $request)
         $user = DB::selectOne('
             SELECT id, login_user, email 
             FROM seguridad.users 
-            WHERE login_user = ? AND isactive = true
+            WHERE login_user = ? AND isactive = true AND deleted_at IS NULL
         ', [$login_user]);
         
         if (!$user) {
@@ -1132,7 +1308,7 @@ public function solicitarRecuperacion(Request $request)
         $user = DB::selectOne('
             SELECT id, login_user, name, email
             FROM seguridad.users 
-            WHERE login_user = ? AND isactive = true
+            WHERE login_user = ? AND isactive = true AND deleted_at IS NULL
         ', [$login_user]);
         
         if (!$user) {
