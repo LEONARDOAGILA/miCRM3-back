@@ -4,6 +4,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\rh\CargoController;
 use App\Http\Controllers\rh\DepartamentoController;
 use App\Http\Controllers\rh\EmpleadoController;
+use App\Http\Controllers\rh\MarcacionController;
+use App\Http\Controllers\rh\RostroController;
 
 // ============================================================================
 // MÓDULO RH (recursos humanos). Prefijo global: /rh (RouteServiceProvider).
@@ -51,4 +53,29 @@ Route::group([
     Route::post('guardarContactos/{id}', [EmpleadoController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza
     // Pública (la usa <img src>), como getImagenUsuario
     Route::get('getImagenEmpleado/{id}', [EmpleadoController::class, 'getImagenEmpleado']);
+});
+
+// MARCACIONES (entradas / salidas)
+Route::group([
+    'prefix' => 'marcacion',
+], function () {
+    Route::get('allMarcaciones', [MarcacionController::class, 'allMarcaciones'])->middleware(['jwt.auth', 'usuario.activo']);        // ?page&per_page&search&desde&hasta&empleado_id&tipo&origen
+    Route::get('findByIdMarcacion/{id}', [MarcacionController::class, 'findByIdMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::get('resumen', [MarcacionController::class, 'resumen'])->middleware(['jwt.auth', 'usuario.activo']);                      // horas por empleado y día
+    Route::post('registrar', [MarcacionController::class, 'registrar'])->middleware(['jwt.auth', 'usuario.activo']);                  // kiosco facial
+    Route::post('addMarcacion', [MarcacionController::class, 'addMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);            // alta manual
+    Route::post('editMarcacion/{id}', [MarcacionController::class, 'editMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::delete('deleteMarcacion/{id}', [MarcacionController::class, 'deleteMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);
+    // Pública (la usa <img src>)
+    Route::get('getImagenMarcacion/{id}', [MarcacionController::class, 'getImagenMarcacion']);
+});
+
+// ROSTROS (plantillas faciales de los empleados)
+Route::group([
+    'prefix' => 'rostro', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allRostros', [RostroController::class, 'allRostros']);                                   // ?empleado_id
+    Route::post('addRostro', [RostroController::class, 'addRostro']);                                    // { empleado_id, descriptores: [[128]…], origen }
+    Route::delete('deleteRostro/{id}', [RostroController::class, 'deleteRostro']);
+    Route::delete('deleteRostrosEmpleado/{empleadoId}', [RostroController::class, 'deleteRostrosEmpleado']);
 });
