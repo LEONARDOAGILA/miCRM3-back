@@ -5,6 +5,7 @@ use App\Http\Controllers\config\ArchivoController;
 use App\Http\Controllers\config\PermisoArchivoController;
 
 use App\Http\Controllers\config\DepartamentoController;
+use App\Http\Controllers\config\BoletinController;
 
 
 
@@ -68,3 +69,28 @@ Route::group([
 
 
 
+
+
+// BOLETINES (avisos con imágenes que se muestran al entrar al sistema)
+Route::group([
+    'prefix' => 'boletin', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allBoletines', [BoletinController::class, 'allBoletines']);
+    Route::get('findByIdBoletin/{id}', [BoletinController::class, 'findByIdBoletin']);
+    Route::get('destinatarios/{id}', [BoletinController::class, 'destinatarios']);   // quién lo verá
+    Route::get('papelera', [BoletinController::class, 'papelera']);
+
+    Route::post('addBoletin', [BoletinController::class, 'addBoletin']);
+    Route::post('editBoletin/{id}', [BoletinController::class, 'editBoletin']);
+    Route::post('restaurarBoletin/{id}', [BoletinController::class, 'restaurarBoletin']);
+    Route::delete('deleteBoletin/{id}', [BoletinController::class, 'deleteBoletin']);
+    Route::delete('eliminarDefinitivo/{id}', [BoletinController::class, 'eliminarDefinitivo']);
+    Route::delete('vaciarPapelera', [BoletinController::class, 'vaciarPapelera']);
+
+    Route::post('subirImagen', [BoletinController::class, 'subirImagen']);           // fichero -> nombre guardado
+    Route::get('imagen/{imagenId}', [BoletinController::class, 'imagen']);           // con marca de agua del que la ve
+
+    // Lo que ve el usuario al iniciar sesión
+    Route::get('misBoletines', [BoletinController::class, 'misBoletines']);
+    Route::post('marcarVisto/{id}', [BoletinController::class, 'marcarVisto']);
+});
