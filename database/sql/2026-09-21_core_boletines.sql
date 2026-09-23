@@ -202,6 +202,9 @@ AS $function$
                               WHEN CURRENT_DATE > b.hasta     THEN 'CADUCADO'
                               ELSE 'VIGENTE' END,
         'en_papelera',   (b.deleted_at IS NOT NULL),
+        -- Para la papelera: cuándo y quién lo eliminó
+        'deleted_at',    to_char(b.deleted_at, 'YYYY-MM-DD HH24:MI'),
+        'deleted_by',    b.deleted_by,
         'imagenes',      COALESCE((
                             SELECT jsonb_agg(jsonb_build_object(
                                      'id', i.id, 'archivo', i.archivo, 'titulo', i.titulo,
@@ -303,7 +306,9 @@ BEGIN
             'current_page', GREATEST(p_page, 1),
             'per_page', p_per_page,
             'total', v_total,
-            'last_page', GREATEST(CEIL(v_total::numeric / NULLIF(p_per_page, 0))::int, 1)
+            'last_page', GREATEST(CEIL(v_total::numeric / NULLIF(p_per_page, 0))::int, 1),
+            -- Para el contador del botón de la papelera, sin pedir otra vuelta
+            'en_papelera', (SELECT COUNT(*) FROM core.boletines WHERE deleted_at IS NOT NULL)
         )
     );
 END;
