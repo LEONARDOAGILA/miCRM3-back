@@ -87,10 +87,14 @@ Route::group([
     Route::delete('eliminarDefinitivo/{id}', [BoletinController::class, 'eliminarDefinitivo']);
     Route::delete('vaciarPapelera', [BoletinController::class, 'vaciarPapelera']);
 
+    // Lanzarlo ahora: avisa por websocket a los destinatarios conectados
+    Route::post('lanzarBoletin/{id}', [BoletinController::class, 'lanzarBoletin']);
+
     Route::post('subirImagen', [BoletinController::class, 'subirImagen']);           // fichero -> nombre guardado
     Route::get('imagen/{imagenId}', [BoletinController::class, 'imagen']);           // con marca de agua del que la ve
 
     // Lo que ve el usuario al iniciar sesión
     Route::get('misBoletines', [BoletinController::class, 'misBoletines']);
+    Route::get('miBoletin/{id}', [BoletinController::class, 'miBoletin']);      // uno concreto, aunque no esté vigente
     Route::post('marcarVisto/{id}', [BoletinController::class, 'marcarVisto']);
 });

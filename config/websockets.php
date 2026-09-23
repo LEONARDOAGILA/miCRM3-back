@@ -82,8 +82,15 @@ return [
         /**
          * The Statistics Logger will, by default, handle the incoming statistics, store them
          * and then release them into the database on each interval defined below.
+         *
+         * Aquí va el que no guarda nada: el del paquete manda lo contado cada
+         * minuto a la tabla websockets_statistics_entries, que este proyecto no
+         * tiene (de ahí los errores del log), y es lo único que obliga al
+         * servidor de websockets a tocar la base de datos. Si algún día se
+         * quiere el panel con gráficas, se publica la migración del paquete y
+         * se vuelve a HttpStatisticsLogger.
          */
-        'logger' => BeyondCode\LaravelWebSockets\Statistics\Logger\HttpStatisticsLogger::class,
+        'logger' => \App\Websockets\SinEstadisticasLogger::class,
 
         /*
          * Here you can specify the interval in seconds at which statistics should be logged.

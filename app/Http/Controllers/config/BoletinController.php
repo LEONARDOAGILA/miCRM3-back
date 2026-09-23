@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
+use App\Events\BoletinPublicado;
 
 /**
  * Boletines (core.boletines): avisos con imágenes que se muestran al usuario
@@ -63,6 +64,9 @@ class BoletinController extends Controller
         'AUDIO'  => 'El audio',
         'VIDEO'  => 'El video',
     ];
+
+    /** Pusher no admite más de 100 canales por evento. */
+    private const CANALES_POR_ENVIO = 90;
 
     private const SUBIDA_OK = [
         'IMAGEN' => 'Imagen subida con éxito',
@@ -166,6 +170,92 @@ class BoletinController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en destinatarios', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
             return $this->errorResponse('Ocurrió un error al obtener los destinatarios', 500);
+        }
+    }
+
+    /**
+     * Lanza el boletín a quien le toca, sin esperar a que vuelva a entrar.
+     *
+     * Avisa por websocket a los destinatarios que estén con la sesión abierta.
+     * El aviso lleva el id y el título; el contenido lo vuelve a pedir cada
+     * pantalla con su token.
+     *
+     * Con ignorar_no_mostrar se retira antes la marca de «no volver a mostrar»,
+     * que es lo único que cambia en los datos del boletín.
+     */
+    public function lanzarBoletin(Request $request, $id)
+    {
+        try {
+            $u = auth('api')->user();
+            if (!$this->puedeAdministrar($u->id ?? null)) {
+                return $this->errorResponse('No tiene permiso para lanzar boletines', 403);
+            }
+
+            $result = DB::selectOne('SELECT core.fn_boletines_obtener(?::BIGINT) as result', [(int) $id]);
+            $datos = json_decode($result->result, true);
+            if (!($datos['success'] ?? false) || empty($datos['data'])) {
+                return $this->errorResponse($datos['message'] ?? 'El boletín no existe', 404);
+            }
+
+            // Se puede lanzar cualquiera menos un inactivo: si el administrador
+            // decide mandar uno programado o ya caducado, manda su decisión.
+            $boletin = $datos['data'];
+            if (!$boletin['activo']) {
+                return $this->errorResponse('El boletín está inactivo: actívelo antes de lanzarlo', 422);
+            }
+            if (empty($boletin['imagenes'])) {
+                return $this->errorResponse('El boletín no tiene contenido que mostrar', 422);
+            }
+
+            // «Ignorar el no volver a mostrar»: se retira esa marca antes de
+            // resolver los destinatarios, así el boletín vuelve a salirles
+            // ahora y la próxima vez que entren.
+            $ignorar = filter_var($request->input('ignorar_no_mostrar', false), FILTER_VALIDATE_BOOLEAN);
+            $reactivados = 0;
+            if ($ignorar) {
+                $result = DB::selectOne('SELECT core.fn_boletines_ignorar_no_mostrar(?::BIGINT) as result', [(int) $id]);
+                $reactivados = (int) (json_decode($result->result, true)['data']['reactivados'] ?? 0);
+            }
+
+            $result = DB::selectOne('SELECT core.fn_boletines_destinatarios(?::BIGINT) as result', [(int) $id]);
+            $lista = json_decode($result->result, true)['data'] ?? [];
+
+            // Sólo a los activos: al resto no le sirve de nada el aviso
+            $userIds = [];
+            foreach ($lista as $d) {
+                if (($d['isactive'] ?? false) && !($d['no_mostrar'] ?? false)) {
+                    $userIds[] = (int) $d['user_id'];
+                }
+            }
+
+            if (!$userIds) {
+                return $this->errorResponse('Nadie puede recibirlo: revise los destinatarios del boletín', 422);
+            }
+
+            // Pusher admite 100 canales por envío: se manda por tandas
+            foreach (array_chunk($userIds, self::CANALES_POR_ENVIO) as $tanda) {
+                event(new BoletinPublicado((int) $id, (string) $boletin['titulo'], $tanda));
+            }
+
+            $mensaje = count($userIds) === 1
+                ? 'Boletín lanzado a 1 usuario'
+                : sprintf('Boletín lanzado a %d usuarios', count($userIds));
+            if ($reactivados) {
+                $mensaje .= $reactivados === 1
+                    ? ', a 1 de ellos se le quitó el «no volver a mostrar»'
+                    : sprintf(', a %d de ellos se les quitó el «no volver a mostrar»', $reactivados);
+            }
+
+            return $this->successResponse(
+                ['destinatarios' => count($userIds), 'reactivados' => $reactivados],
+                $mensaje
+            );
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al lanzar el boletín', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al lanzar el boletín', 500);
         }
     }
 
@@ -566,6 +656,31 @@ class BoletinController extends Controller
     // ================================================================
     // LO QUE VE EL USUARIO AL ENTRAR
     // ================================================================
+
+    /**
+     * Un boletín concreto, para quien lo va a ver.
+     *
+     * Lo usa la pantalla cuando le llega el aviso de que le han lanzado uno:
+     * a diferencia de misBoletines, no mira la vigencia, porque el
+     * administrador puede lanzar a mano uno programado o ya caducado. Lo que
+     * sí se comprueba, en la base, es que esté activo y que quien pregunta
+     * sea destinatario.
+     */
+    public function miBoletin(Request $request, $id)
+    {
+        try {
+            $u = auth('api')->user();
+            $result = DB::selectOne(
+                'SELECT core.fn_boletines_mio(?::BIGINT, ?::BIGINT) as result',
+                [(int) $id, $u->id ?? null]
+            );
+            $datos = json_decode($result->result, true);
+            return $this->successResponse($datos['data'], $datos['message']);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en miBoletin', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al obtener el boletín', 500);
+        }
+    }
 
     public function misBoletines(Request $request)
     {

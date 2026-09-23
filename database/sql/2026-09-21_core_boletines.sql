@@ -641,6 +641,68 @@ $function$;
 -- ---------------------------------------------------------------------------
 -- Registrar la lectura (y el "no volver a mostrar")
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Un boletín concreto, para quien lo va a ver
+--
+-- Es el hermano de fn_boletines_mios, con dos diferencias: va por id y NO
+-- mira la vigencia. Se usa cuando el administrador lanza un boletín a mano:
+-- si decide lanzar uno programado o ya caducado, manda su decisión. Lo que
+-- no se salta es el resto: tiene que estar activo, con contenido, y quien
+-- pregunta tiene que ser destinatario y no haber dicho «no volver a mostrar».
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION core.fn_boletines_mio(p_id bigint, p_user_id bigint)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+AS $function$
+DECLARE v_data jsonb;
+BEGIN
+    SELECT core.fn_boletines_json(b.id) INTO v_data
+      FROM core.boletines b
+     WHERE b.id = p_id
+       AND b.deleted_at IS NULL
+       AND b.activo
+       AND EXISTS (SELECT 1 FROM core.boletines_imagenes i WHERE i.boletin_id = b.id)
+       AND (
+            EXISTS (SELECT 1 FROM core.boletines_usuarios bu
+                     WHERE bu.boletin_id = b.id AND bu.user_id = p_user_id)
+         OR EXISTS (SELECT 1 FROM core.boletines_grupos bg
+                      CROSS JOIN LATERAL core.fn_boletines_usuarios_de_grupo(bg.grupo_id, bg.incluir_subgrupos) g
+                     WHERE bg.boletin_id = b.id AND g.user_id = p_user_id)
+           )
+       AND NOT EXISTS (SELECT 1 FROM core.boletines_vistos v
+                        WHERE v.boletin_id = b.id AND v.user_id = p_user_id AND v.no_mostrar);
+
+    RETURN jsonb_build_object('success', true, 'message', 'La solicitud ha tenido éxito', 'data', v_data);
+END;
+$function$;
+
+-- ---------------------------------------------------------------------------
+-- Quitar el «no volver a mostrar» de un boletín
+--
+-- Lo usa el lanzamiento a mano cuando el administrador marca «ignorar el
+-- no volver a mostrar»: el boletín vuelve a salirle a quien lo había
+-- ocultado, ahora y la próxima vez que entre. Es la única forma de
+-- revertir esa marca, que el usuario sólo puede poner.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION core.fn_boletines_ignorar_no_mostrar(p_id bigint)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $function$
+DECLARE v_cuantos integer;
+BEGIN
+    UPDATE core.boletines_vistos
+       SET no_mostrar = false
+     WHERE boletin_id = p_id
+       AND no_mostrar;
+
+    GET DIAGNOSTICS v_cuantos = ROW_COUNT;
+
+    RETURN jsonb_build_object('success', true,
+                              'message', 'Marca de «no volver a mostrar» retirada',
+                              'data', jsonb_build_object('reactivados', v_cuantos));
+END;
+$function$;
 CREATE OR REPLACE FUNCTION core.fn_boletines_marcar_visto(
     p_boletin_id bigint,
     p_user_id    bigint,
