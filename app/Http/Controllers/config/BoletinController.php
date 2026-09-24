@@ -259,6 +259,48 @@ class BoletinController extends Controller
         }
     }
 
+    /**
+     * Orden de la lista: los boletines de `ids`, en ese orden.
+     *
+     * Se reparten entre ellos las posiciones que ya ocupaban, así arrastrar
+     * una fila en la grilla no toca al resto de la lista.
+     */
+    public function reordenarBoletines(Request $request)
+    {
+        $datos = $this->datosDe($request);
+
+        $validator = Validator::make($datos, [
+            'ids'   => 'required|array|min:1',
+            'ids.*' => 'required|integer',
+        ], [
+            'ids.required' => 'No se recibió ningún boletín que ordenar',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse($validator->errors()->first(), 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $ids = '{' . implode(',', array_map('intval', $datos['ids'])) . '}';
+            $result = DB::selectOne(
+                'SELECT core.fn_boletines_reordenar(?::BIGINT[], ' . self::CASTS_AUDIT . ') as result',
+                array_merge([$ids], $this->auditoria($request))
+            );
+            $respuesta = json_decode($result->result, true);
+            DB::commit();
+            return $this->successResponse($respuesta['data'], $respuesta['message']);
+        } catch (QueryException $e) {
+            DB::rollBack();
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            DB::rollBack();
+            sistemaLog('error', 'Error al reordenar boletines', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al cambiar el orden', 500);
+        }
+    }
+
     public function papelera()
     {
         try {
@@ -294,7 +336,7 @@ class BoletinController extends Controller
             'descripcion'            => 'nullable|string',
             'desde'                  => 'nullable|date',
             'hasta'                  => ($id === null ? 'required' : 'sometimes') . '|date',
-            'prioridad'              => 'nullable|integer|min:0|max:100',
+            'orden'                  => 'nullable|integer|min:0',
             'obligatorio'            => 'nullable|boolean',
             'activo'                 => 'nullable|boolean',
             'imagenes'               => 'nullable|array',
@@ -311,7 +353,7 @@ class BoletinController extends Controller
             'hasta.required'  => 'Indique hasta qué día rige el boletín',
             'hasta.date'      => 'La fecha «hasta» no es una fecha válida',
             'desde.date'      => 'La fecha «desde» no es una fecha válida',
-            'prioridad.integer' => 'La prioridad debe ser un número',
+            'orden.integer'     => 'El orden debe ser un número',
             'imagenes.*.segundos.integer' => 'El tiempo en pantalla debe ser un número de segundos',
             'imagenes.*.segundos.min'     => 'Cada imagen debe quedarse al menos 1 segundo en pantalla',
             'imagenes.*.segundos.max'     => 'Una imagen no puede quedarse más de 120 segundos en pantalla',

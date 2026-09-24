@@ -6,6 +6,7 @@ use App\Http\Controllers\config\PermisoArchivoController;
 
 use App\Http\Controllers\config\DepartamentoController;
 use App\Http\Controllers\config\BoletinController;
+use App\Http\Controllers\config\NotificacionController;
 
 
 
@@ -89,6 +90,8 @@ Route::group([
 
     // Lanzarlo ahora: avisa por websocket a los destinatarios conectados
     Route::post('lanzarBoletin/{id}', [BoletinController::class, 'lanzarBoletin']);
+    // Orden de la lista: los ids en el orden en que deben quedar
+    Route::post('reordenarBoletines', [BoletinController::class, 'reordenarBoletines']);
 
     Route::post('subirImagen', [BoletinController::class, 'subirImagen']);           // fichero -> nombre guardado
     Route::get('imagen/{imagenId}', [BoletinController::class, 'imagen']);           // con marca de agua del que la ve
@@ -97,4 +100,29 @@ Route::group([
     Route::get('misBoletines', [BoletinController::class, 'misBoletines']);
     Route::get('miBoletin/{id}', [BoletinController::class, 'miBoletin']);      // uno concreto, aunque no esté vigente
     Route::post('marcarVisto/{id}', [BoletinController::class, 'marcarVisto']);
+});
+
+
+/*
+|--------------------------------------------------------------------------
+| NOTIFICACIONES
+|--------------------------------------------------------------------------
+| Los avisos breves de la campana. La administración (enviar, listar,
+| eliminar) y lo que cada usuario ve de lo suyo.
+*/
+Route::group([
+    'prefix' => 'notificacion', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    // Administración
+    Route::get('allNotificaciones', [NotificacionController::class, 'allNotificaciones']);
+    Route::get('findByIdNotificacion/{id}', [NotificacionController::class, 'findByIdNotificacion']);
+    Route::get('destinatarios/{id}', [NotificacionController::class, 'destinatarios']);   // quién la recibió y quién la leyó
+    Route::post('enviarNotificacion', [NotificacionController::class, 'enviarNotificacion']);
+    Route::delete('deleteNotificacion/{id}', [NotificacionController::class, 'deleteNotificacion']);
+
+    // La campana de cada usuario
+    Route::get('misNotificaciones', [NotificacionController::class, 'misNotificaciones']);
+    Route::get('contador', [NotificacionController::class, 'contador']);
+    Route::post('marcarLeidas', [NotificacionController::class, 'marcarLeidas']);   // { ids } o vacío = todas
+    Route::post('archivar', [NotificacionController::class, 'archivar']);           // { ids } o vacío = todas
 });
