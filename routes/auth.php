@@ -10,6 +10,7 @@ use App\Http\Controllers\auth\UserController;
 use App\Http\Controllers\auth\GrupoController;
 use App\Http\Controllers\auth\HorarioController;
 use App\Http\Controllers\auth\AuditoriaController;
+use App\Http\Controllers\auth\PresenciaController;
 
 
 
@@ -155,6 +156,22 @@ Route::group([
     Route::get('all', [AuditoriaController::class, 'all']);
     Route::post('getByRecord/{tabla}/{id}', [AuditoriaController::class, 'getByRecord']);
     Route::get('getLatest/ultimos/{limit?}', [AuditoriaController::class, 'getLatest'])->where('limit', '[0-9]+');
+});
+
+
+
+
+// PRESENCIA: el «En línea / Fuera de línea» de la cabecera
+Route::group([
+    'prefix' => 'presencia', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('mia', [PresenciaController::class, 'mia']);
+    Route::get('conectados', [PresenciaController::class, 'conectados']);
+
+    Route::post('cambiar', [PresenciaController::class, 'cambiar']);
+    // La más repetida: sólo escribe la hora del último latido
+    Route::post('latido', [PresenciaController::class, 'latido']);
+    Route::post('desconectar', [PresenciaController::class, 'desconectar']);
 });
 
 
