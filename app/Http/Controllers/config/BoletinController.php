@@ -338,6 +338,8 @@ class BoletinController extends Controller
             'hasta'                  => ($id === null ? 'required' : 'sometimes') . '|date',
             'orden'                  => 'nullable|integer|min:0',
             'obligatorio'            => 'nullable|boolean',
+            // Si el visor ofrece la casilla «No volver a mostrar»
+            'no_mostrar'             => 'nullable|boolean',
             'activo'                 => 'nullable|boolean',
             'imagenes'               => 'nullable|array',
             'imagenes.*.archivo'     => 'nullable|string|max:255',
