@@ -51,8 +51,12 @@ Route::group([
     Route::post('addImagen', [EmpleadoController::class, 'addImagen'])->middleware(['jwt.auth', 'usuario.activo']);            // { EmpleadoId, imagen_file }
     Route::get('listContactos/{id}', [EmpleadoController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // contactos de emergencia
     Route::post('guardarContactos/{id}', [EmpleadoController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza
-    // Pública (la usa <img src>), como getImagenUsuario
+    Route::post('guardarUbicacion/{id}', [EmpleadoController::class, 'guardarUbicacion'])->middleware(['jwt.auth', 'usuario.activo']);  // los datos que trae el mapa
+    Route::post('addFotoUbicacion', [EmpleadoController::class, 'addFotoUbicacion'])->middleware(['jwt.auth', 'usuario.activo']);            // { EmpleadoId, campo: mapa|casa, imagen_file }
+
+    // Públicas (las usa <img src>), como getImagenUsuario
     Route::get('getImagenEmpleado/{id}', [EmpleadoController::class, 'getImagenEmpleado']);
+    Route::get('getFotoUbicacion/{id}/{campo}', [EmpleadoController::class, 'getFotoUbicacion']);
 });
 
 // MARCACIONES (entradas / salidas)

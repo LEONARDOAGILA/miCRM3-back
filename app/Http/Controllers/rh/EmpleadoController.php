@@ -46,7 +46,7 @@ class EmpleadoController extends Controller
     ];
 
     public function __construct() {
-        $this->middleware('auth:api', ['except' => ['getImagenEmpleado']]);
+        $this->middleware('auth:api', ['except' => ['getImagenEmpleado', 'getFotoUbicacion']]);
     }
 
     private function traducirErrorPostgres(QueryException $e): array
@@ -502,5 +502,166 @@ class EmpleadoController extends Controller
         if (!$foto) { return; }
         $path = storage_path('app/public/' . self::CARPETA_FOTOS . '/' . $foto);
         if (file_exists($path)) { @unlink($path); }
+    }
+
+    // ================================================================
+    // UBICACIÓN (la dirección que viene de Google Maps)
+    // ================================================================
+
+    /** Los mismos marcadores de auditoría que usan las demás funciones. */
+    private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
+
+    /**
+     * Guarda el bloque de dirección del mapa.
+     *
+     * Va aparte del alta y la modificación a propósito: son doce campos que
+     * llegan juntos del mapa y se pueden volver a tomar sin tocar el resto de
+     * la ficha del empleado.
+     */
+    public function guardarUbicacion(Request $request, $id)
+    {
+        $datos = $this->datosDe($request);
+
+        $validator = Validator::make($datos, [
+            'provincia'        => 'nullable|string|max:100',
+            'canton'           => 'nullable|string|max:100',
+            'parroquia'        => 'nullable|string|max:100',
+            'calle_principal'  => 'nullable|string|max:200',
+            'calle_secundaria' => 'nullable|string|max:200',
+            'numeracion'       => 'nullable|string|max:50',
+            'ubicacion'        => 'nullable|string|max:1000',
+            'codigo_postal'    => 'nullable|string|max:20',
+            'coordenadas'      => 'nullable|string|max:60',
+            'link_coordenadas' => 'nullable|string|max:1000',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse($validator->errors()->first(), 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $result = DB::selectOne(
+                'SELECT rh.fn_empleados_ubicacion(?::BIGINT, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, json_encode($validator->validated())], $this->auditoria($request))
+            );
+            $resultado = json_decode($result->result, true);
+            DB::commit();
+
+            return $this->successResponse($resultado['data'], $resultado['message']);
+        } catch (QueryException $e) {
+            DB::rollBack();
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            DB::rollBack();
+            sistemaLog('error', 'Error al guardar la ubicación del empleado', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al guardar la ubicación', 500);
+        }
+    }
+
+    /**
+     * Las dos fotos del mapa: la vista de arriba y la de la calle.
+     *
+     * Llegan ya hechas desde el navegador (el mapa las captura), así que aquí
+     * sólo se guardan tal cual — este servidor no tiene GD para tocarlas.
+     */
+    public function addFotoUbicacion(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            $validator = Validator::make($request->all(), [
+                'EmpleadoId'  => 'required|integer',
+                'campo'       => 'required|in:mapa,casa',
+                'imagen_file' => 'required|file|image|max:10240',
+            ], [
+                'EmpleadoId.required'  => 'Falta el empleado',
+                'campo.in'             => 'La foto debe ser «mapa» o «casa»',
+                'imagen_file.required' => 'No se encontró la imagen para guardar',
+                'imagen_file.image'    => 'El archivo debe ser una imagen',
+                'imagen_file.max'      => 'La imagen no puede superar los 10 MB',
+            ]);
+            if ($validator->fails()) {
+                DB::rollBack();
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $empleadoId = (int) $request->EmpleadoId;
+            $campo = $request->campo;
+
+            $existe = DB::selectOne('SELECT id, url_foto_mapa, url_foto_casa FROM rh.empleados WHERE id = ?', [$empleadoId]);
+            if (!$existe) {
+                DB::rollBack();
+                return $this->errorResponse('Empleado no encontrado', 404);
+            }
+            $anterior = $campo === 'mapa' ? $existe->url_foto_mapa : $existe->url_foto_casa;
+
+            $file = $request->file('imagen_file');
+            $extension = strtolower($file->getClientOriginalExtension() ?: 'png');
+            $filename  = $empleadoId . '_emp' . $campo . '.' . $extension;
+
+            if (!$file->storeAs('public/' . self::CARPETA_FOTOS, $filename)) {
+                DB::rollBack();
+                return $this->errorResponse('Error al guardar el archivo', 500);
+            }
+            $filePath = storage_path('app/public/' . self::CARPETA_FOTOS . '/' . $filename);
+            if (!file_exists($filePath) || filesize($filePath) === 0) {
+                DB::rollBack();
+                return $this->errorResponse('El archivo no se guardó correctamente', 500);
+            }
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_empleados_foto_ubicacion(?::BIGINT, ?::TEXT, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([$empleadoId, $campo, $filename], $this->auditoria($request))
+            );
+            $resultado = json_decode($result->result, true);
+
+            // La anterior con otra extensión ya no la referencia nadie
+            if ($anterior && $anterior !== $filename) {
+                $this->eliminarFotoPorNombre($anterior);
+            }
+            DB::commit();
+
+            sistemaLog('info', 'Foto de ubicación guardada', ['empleado_id' => $empleadoId, 'campo' => $campo, 'archivo' => $filename]);
+            return $this->successResponse([
+                'campo'     => $campo,
+                'archivo'   => $filename,
+                'full_path' => asset('storage/' . self::CARPETA_FOTOS . '/' . $filename),
+            ], $resultado['message']);
+
+        } catch (QueryException $e) {
+            DB::rollBack();
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            DB::rollBack();
+            sistemaLog('error', 'Error en addFotoUbicacion', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al guardar la foto', 500);
+        }
+    }
+
+    /** Devuelve una de las dos fotos del mapa (la usa <img src>). */
+    public function getFotoUbicacion($id, $campo)
+    {
+        try {
+            if (!in_array($campo, ['mapa', 'casa'], true)) {
+                return $this->errorResponse('La foto debe ser «mapa» o «casa»', 422);
+            }
+
+            $columna = $campo === 'mapa' ? 'url_foto_mapa' : 'url_foto_casa';
+            $result = DB::selectOne("SELECT $columna AS archivo FROM rh.empleados WHERE id = ?", [(int) $id]);
+            if (!$result || !$result->archivo) {
+                return $this->errorResponse('El empleado no tiene esa foto', 404);
+            }
+
+            $path = storage_path('app/public/' . self::CARPETA_FOTOS . '/' . $result->archivo);
+            if (!file_exists($path)) {
+                return $this->errorResponse('La foto no existe en el servidor', 404);
+            }
+            return response()->file($path);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en getFotoUbicacion', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al obtener la foto', 500);
+        }
     }
 }
