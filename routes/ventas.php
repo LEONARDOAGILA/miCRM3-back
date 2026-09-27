@@ -45,7 +45,9 @@ Route::group([
     Route::get('allGestiones', [GestionController::class, 'allGestiones']);                 // ?cliente_id&page&per_page&search&tipo&estado&desde&hasta
     Route::get('findByIdGestion/{id}', [GestionController::class, 'findByIdGestion']);
     Route::get('resumen/{clienteId}', [GestionController::class, 'resumen']);               // contadores + última y próxima
-    Route::get('agenda', [GestionController::class, 'agenda']);                             // ?empleado_id&desde&hasta&limite
+    Route::get('estadisticas', [GestionController::class, 'estadisticas']);   // tablero: ?dias=14
+    Route::get('agenda', [GestionController::class, 'agenda']);
+    Route::get('agendaPaginada', [GestionController::class, 'agendaPaginada']);  // la grilla: + ?page&per_page&search                             // ?empleado_id&desde&hasta&limite
     Route::post('addGestion', [GestionController::class, 'addGestion']);                    // registrar una hecha o programar una
     Route::post('editGestion/{id}', [GestionController::class, 'editGestion']);
     Route::post('cerrarGestion/{id}', [GestionController::class, 'cerrarGestion']);         // { resultado, nota?, duracion_minutos?, siguiente? }

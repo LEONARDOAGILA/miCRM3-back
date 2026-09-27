@@ -221,6 +221,76 @@ class GestionController extends Controller
     }
 
     /** Contadores del cliente, con su última y su próxima gestión. */
+    /**
+     * La agenda en grilla: una página de lo pendiente, con buscador.
+     *
+     * Va aparte de agenda() a propósito: aquella devuelve la lista entera
+     * hasta un límite y la usa el servicio del recordatorio, que no pagina ni
+     * busca. Los contadores (total, vencidas, hoy) siguen siendo de todo el
+     * filtro, no de la página.
+     *
+     * ?empleado_id | ?mias=1 | ?desde | ?hasta | ?vencidas=1 | ?search
+     * ?page | ?per_page
+     */
+    public function agendaPaginada(Request $request)
+    {
+        try {
+            $empleadoId = $request->filled('empleado_id') ? (int) $request->input('empleado_id') : null;
+            $login      = filter_var($request->query('mias', false), FILTER_VALIDATE_BOOLEAN)
+                ? ($request->user()->login_user ?? null)
+                : null;
+            $desde      = $request->filled('desde') ? $request->input('desde') : null;
+            $hasta      = $request->filled('hasta') ? $request->input('hasta') : null;
+            $vencidas   = filter_var($request->query('vencidas', false), FILTER_VALIDATE_BOOLEAN);
+            $search     = (string) $request->input('search', '');
+            $page       = (int) $request->input('page', 1);
+            $perPage    = (int) $request->input('per_page', 15);
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER) as result',
+                [$empleadoId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage]
+            );
+            $resultado = json_decode($result->result, true);
+
+            return $resultado['success']
+                ? $this->successResponse(['data' => $resultado['data'], 'meta' => $resultado['meta']], $resultado['message'])
+                : $this->errorResponse($resultado['message'], 500);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en la agenda paginada', ['message' => $e->getMessage()]);
+            return $this->errorResponse('Ocurrió un error al obtener la agenda', 500);
+        }
+    }
+
+    /**
+     * El tablero de ventas: cómo va la cartera y cómo va el día.
+     *
+     * Lo pinta «Gestión de clientes» mientras no hay un cliente elegido. Todo
+     * sale de una sola función para no encadenar ocho peticiones: en este
+     * servidor cada llamada cuesta más que las consultas que hace.
+     *
+     * ?dias=14  cuántos días trae la serie del gráfico (entre 7 y 90)
+     */
+    public function estadisticas(Request $request)
+    {
+        try {
+            $login = $request->user()->login_user ?? null;
+            $dias  = (int) $request->query('dias', 14);
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_estadisticas_generales(?::VARCHAR, ?::INTEGER) as result',
+                [$login, $dias]
+            );
+            $resultado = json_decode($result->result, true);
+
+            return $resultado['success']
+                ? $this->successResponse($resultado['data'], $resultado['message'])
+                : $this->errorResponse($resultado['message'], 500);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en las estadísticas de ventas', ['message' => $e->getMessage()]);
+            return $this->errorResponse('Ocurrió un error al obtener las estadísticas', 500);
+        }
+    }
+
     public function resumen($clienteId)
     {
         try {
