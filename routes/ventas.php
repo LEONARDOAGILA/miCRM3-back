@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ventas\ClienteController;
 use App\Http\Controllers\ventas\GestionController;
+use App\Http\Controllers\ventas\WhatsappController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -56,4 +57,18 @@ Route::group([
     // Cartera
     Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
+});
+
+// CONVERSACIONES DE WHATSAPP
+// El alta la llama el servicio miCRM3-wa con la clave X-WA-TOKEN (no es un
+// usuario, así que no lleva jwt.auth); el resto lo consume la pantalla.
+Route::group(['prefix' => 'whatsapp'], function () {
+    Route::post('mensaje', [WhatsappController::class, 'recibir']);
+
+    Route::group(['middleware' => ['jwt.auth', 'usuario.activo']], function () {
+        Route::get('conversacion/{clienteId}', [WhatsappController::class, 'conversacion']);   // ?limite=200
+        Route::get('resumen/{clienteId}', [WhatsappController::class, 'resumen']);
+        Route::get('sinAsignar', [WhatsappController::class, 'sinAsignar']);                   // ?limite=50
+        Route::post('asignar', [WhatsappController::class, 'asignar']);                        // { numero, cliente_id }
+    });
 });
