@@ -151,6 +151,7 @@ public function findByProgramProfile($perfil, $programa)
                 a.listar,
                 a.reporte,
                 a.auditar,
+                a.papelera,
                 a.ejecutar,
                 a.created_at,
                 a.updated_at,
@@ -214,6 +215,7 @@ public function findByIdProfileAccess($id)
                 a.reporte,
                 a.ejecutar,
                 a.auditar,
+                a.papelera,
                 a.created_at,
                 a.updated_at,
                 m.id as menu_id,
@@ -247,6 +249,7 @@ public function findByIdProfileAccess($id)
                 'reporte' => (bool) $acceso->reporte,
                 'ejecutar' => (bool) $acceso->ejecutar,
                 'auditar' => (bool) $acceso->auditar,
+                'papelera' => (bool) $acceso->papelera,
                 'created_at' => $acceso->created_at,
                 'updated_at' => $acceso->updated_at,
                 'menu' => (object) [
@@ -432,6 +435,7 @@ public function addProfile(Request $request)
                 'reporte'  => (bool)($acceso['reporte'] ?? false),
                 'ejecutar' => (bool)($acceso['ejecutar'] ?? false),
                 'auditar'  => (bool)($acceso['auditar'] ?? false),
+                'papelera' => (bool)($acceso['papelera'] ?? false),
             ];
         }, $validatedData['acceso']);
         
@@ -544,6 +548,7 @@ public function editProfile(Request $request, $id)
                 'reporte'  => (bool)($acceso['reporte'] ?? false),
                 'ejecutar' => (bool)($acceso['ejecutar'] ?? false),
                 'auditar'  => (bool)($acceso['auditar'] ?? false),
+                'papelera' => (bool)($acceso['papelera'] ?? false),
             ];
         }, $validatedData['acceso']);
         
@@ -717,6 +722,7 @@ public function clonProfile(Request $request)
                 'reporte'  => (bool)($acceso['reporte'] ?? false),
                 'ejecutar' => (bool)($acceso['ejecutar'] ?? false),
                 'auditar'  => (bool)($acceso['auditar'] ?? false),
+                'papelera' => (bool)($acceso['papelera'] ?? false),
             ];
         }, $validatedData['acceso']);
         

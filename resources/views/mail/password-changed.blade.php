@@ -172,7 +172,10 @@
         <!-- Cabecera con logo -->
         <div class="header">
             <div class="logo">
-                <img src="{{ $message->embed(public_path('storage/img/mail/mail.png')) }}" alt="Logo">
+                @php $rutaLogo = public_path('storage/img/mail/mail.png'); @endphp
+                @if (file_exists($rutaLogo))
+                    <img src="{{ $message->embed($rutaLogo) }}" alt="Logo">
+                @endif
                 
             </div>
         </div>
@@ -189,7 +192,11 @@
                 Has solicitado recientemente cambiar tu contraseña en <strong>miEMPRESA Cía. Ltda.</strong>
             </div>
             
-            <!-- Recuadro con la nueva contraseña -->
+            {{--
+                Contraseña TEMPORAL de un solo uso: el usuario entra con ella y el
+                sistema le obliga a cambiarla (isreset = true), así que su ventana
+                de validez es el primer inicio de sesión.
+            --}}
             <div class="password-box">
                 <div class="password-label">🔐 Tu nueva contraseña temporal es:</div>
                 <div class="password-value">{{ $object->password }}</div>
@@ -197,7 +204,7 @@
                     ⚠️ Por seguridad, cambia esta contraseña al iniciar sesión
                 </div>
             </div>
-            
+
             <div class="message">
                 <strong>Recomendaciones de seguridad:</strong>
                 <ul style="margin-top: 10px; text-align: left; display: inline-block;">

@@ -1,6 +1,27 @@
--- FUNCTION: seguridad.fn_usuarios_modificar(bigint, character varying, character varying, character varying, character varying, character varying, character varying, boolean, integer, integer, integer, bigint, character varying, character varying, inet, text, uuid)
-
--- DROP FUNCTION IF EXISTS seguridad.fn_usuarios_modificar(bigint, character varying, character varying, character varying, character varying, character varying, character varying, boolean, integer, integer, integer, bigint, character varying, character varying, inet, text, uuid);
+-- FUNCTION: seguridad.fn_usuarios_modificar(...)
+--
+-- ALINEADA AL ESTÁNDAR DE fn_usuarios_crear
+--
+-- 1. SIN «EXCEPTION WHEN OTHERS ... RETURN success:false»: el error se propaga
+--    y PostgreSQL aborta la transacción. El rollback lo garantiza la base, no
+--    el hecho de que PHP se acuerde de mirar 'success'.
+-- 2. Reglas de negocio con RAISE EXCEPTION ... USING ERRCODE, en lugar de
+--    devolver {success:false, error_code:'NOMBRE_REQUERIDO'}. Los códigos son
+--    los mismos que usa fn_usuarios_crear.
+-- 3. Solo se captura unique_violation, y para RE-LANZARLA: las comprobaciones
+--    EXISTS pueden perder la carrera contra otra petición simultánea.
+-- 4. SET search_path (obligatorio en SECURITY DEFINER con OWNER postgres).
+-- 5. app.datos_* se limpia tras el UPDATE, no solo en la rama de error: dura
+--    toda la transacción y contaminaba la auditoría de la siguiente tabla.
+-- 6. La auditoría ya no guarda recovery_code.
+-- 7. Se valida el tipo de usuario (1..4), como en crear.
+--
+-- CÓDIGOS DE ERROR
+--   P0001 nombre obligatorio        P0007 email duplicado
+--   P0002 apellido obligatorio      P0008 perfil inexistente
+--   P0003 login obligatorio         P0009 horario inexistente
+--   P0004 email obligatorio         P0010 tipo de usuario inválido
+--   P0006 login duplicado           P0013 el usuario no existe
 
 CREATE OR REPLACE FUNCTION seguridad.fn_usuarios_modificar(
 	p_id bigint,
@@ -24,6 +45,7 @@ CREATE OR REPLACE FUNCTION seguridad.fn_usuarios_modificar(
     LANGUAGE 'plpgsql'
     COST 100
     VOLATILE SECURITY DEFINER PARALLEL UNSAFE
+    SET search_path = pg_catalog, seguridad, auditoria
 AS $BODY$
 DECLARE
     v_resultado JSONB;
@@ -32,31 +54,28 @@ DECLARE
     v_usuario_actual RECORD;
     v_perfil_data RECORD;
     v_chorario_data RECORD;
-    v_fecha_actual TIMESTAMP;
+    v_fecha_actual TIMESTAMPTZ;
     v_perfil_nuevo_id INTEGER;
     v_chorario_nuevo_id INTEGER;
-    v_fecha_texto TEXT;
+    v_type_user INTEGER;
 BEGIN
-    -- 1. Obtener fecha actual
     v_fecha_actual := CURRENT_TIMESTAMP;
-    v_fecha_texto := to_char(v_fecha_actual, 'YYYY-MM-DD HH24:MI:SS');
-    
-    -- 2. Establecer contexto de auditoría
+
+    -- 1. Contexto de auditoría
     PERFORM set_config('app.usuario_id', COALESCE(p_usuario_id::TEXT, ''), true);
     PERFORM set_config('app.usuario_login', COALESCE(p_usuario_login, current_user), true);
     PERFORM set_config('app.usuario_nombre', COALESCE(p_usuario_nombre, current_user), true);
-    PERFORM set_config('app.ip_address', p_ip_address::TEXT, true);
-    PERFORM set_config('app.user_agent', p_user_agent, true);
-    PERFORM set_config('app.request_id', p_request_id::TEXT, true);
+    PERFORM set_config('app.ip_address', COALESCE(p_ip_address::TEXT, ''), true);
+    PERFORM set_config('app.user_agent', COALESCE(p_user_agent, ''), true);
+    PERFORM set_config('app.request_id', COALESCE(p_request_id::TEXT, ''), true);
     PERFORM set_config('app.modulo', 'seguridad.users', true);
-    
-    -- 3. Obtener datos ACTUALES del usuario (antes de modificar)
-    SELECT 
+
+    -- 2. Datos ACTUALES del usuario (antes de modificar)
+    SELECT
         u.id, u.name, u.surname, u.email, u.phone, u.login_user, u.avatar,
         u.isactive, u.islogin, u.isreset, u.type_user, u.perfil_id, u.chorario_id,
         u.created_by, u.updated_by, u.created_at, u.updated_at,
         u.last_login_at, u.user_verified_at, u.email_verified_at,
-        u.recovery_code, u.recovery_code_expires_at,
         p.nombre as perfil_nombre,
         c.nombre as chorario_nombre
     INTO v_usuario_actual
@@ -64,63 +83,65 @@ BEGIN
     LEFT JOIN seguridad.perfiles p ON p.id = u.perfil_id
     LEFT JOIN seguridad.chorarios c ON c.id = u.chorario_id
     WHERE u.id = p_id;
-    
+
     IF NOT FOUND THEN
-        RETURN jsonb_build_object('success', false, 'message', 'El usuario no existe', 'error_code', 'USUARIO_NO_EXISTE');
+        RAISE EXCEPTION 'El usuario no existe' USING ERRCODE = 'P0013';
     END IF;
-    
-    -- 4. Validaciones
+
+    -- 3. Campos obligatorios
     IF p_name IS NULL OR TRIM(p_name) = '' THEN
-        RETURN jsonb_build_object('success', false, 'message', 'El nombre es obligatorio', 'error_code', 'NOMBRE_REQUERIDO');
+        RAISE EXCEPTION 'El nombre es obligatorio' USING ERRCODE = 'P0001';
     END IF;
-    
+
     IF p_surname IS NULL OR TRIM(p_surname) = '' THEN
-        RETURN jsonb_build_object('success', false, 'message', 'El apellido es obligatorio', 'error_code', 'APELLIDO_REQUERIDO');
+        RAISE EXCEPTION 'El apellido es obligatorio' USING ERRCODE = 'P0002';
     END IF;
-    
+
     IF p_login_user IS NULL OR TRIM(p_login_user) = '' THEN
-        RETURN jsonb_build_object('success', false, 'message', 'El login de usuario es obligatorio', 'error_code', 'LOGIN_REQUERIDO');
+        RAISE EXCEPTION 'El login de usuario es obligatorio' USING ERRCODE = 'P0003';
     END IF;
-    
+
     IF p_email IS NULL OR TRIM(p_email) = '' THEN
-        RETURN jsonb_build_object('success', false, 'message', 'El email es obligatorio', 'error_code', 'EMAIL_REQUERIDO');
+        RAISE EXCEPTION 'El email es obligatorio' USING ERRCODE = 'P0004';
     END IF;
-    
-    -- 5. Verificar login único (excluyendo el propio usuario)
-    IF EXISTS (SELECT 1 FROM seguridad.users WHERE login_user = TRIM(p_login_user) AND id != p_id) THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Ya existe otro usuario con ese login', 'error_code', 'LOGIN_DUPLICADO');
+
+    -- 4. Tipo de usuario: 1 SUPER USUARIO, 2 ADMINISTRADOR, 3 USUARIO SISTEMA, 4 USUARIO WEB
+    v_type_user := COALESCE(p_type_user, v_usuario_actual.type_user);
+    IF v_type_user NOT IN (1, 2, 3, 4) THEN
+        RAISE EXCEPTION 'El tipo de usuario % no es válido', v_type_user USING ERRCODE = 'P0010';
     END IF;
-    
-    -- 6. Verificar email único (excluyendo el propio usuario)
-    IF EXISTS (SELECT 1 FROM seguridad.users WHERE email = TRIM(p_email) AND id != p_id) THEN
-        RETURN jsonb_build_object('success', false, 'message', 'Ya existe otro usuario con ese email', 'error_code', 'EMAIL_DUPLICADO');
+
+    -- 5. Login único (excluyendo el propio usuario).
+    --    Mensaje amable; quien garantiza la unicidad es el índice, por eso
+    --    unique_violation se maneja más abajo.
+    IF EXISTS (SELECT 1 FROM seguridad.users WHERE login_user = TRIM(p_login_user) AND id <> p_id) THEN
+        RAISE EXCEPTION 'Ya existe otro usuario con ese login' USING ERRCODE = 'P0006';
     END IF;
-    
-    -- 7. Determinar IDs nuevos
+
+    -- 6. Email único (excluyendo el propio usuario)
+    IF EXISTS (SELECT 1 FROM seguridad.users WHERE email = TRIM(p_email) AND id <> p_id) THEN
+        RAISE EXCEPTION 'Ya existe otro usuario con ese email' USING ERRCODE = 'P0007';
+    END IF;
+
+    -- 7. Perfil y horario destino
     v_perfil_nuevo_id := COALESCE(p_perfil_id, v_usuario_actual.perfil_id);
     v_chorario_nuevo_id := COALESCE(p_chorario_id, v_usuario_actual.chorario_id);
-    
-    -- 8. Verificar que el perfil existe (si se cambió)
-    IF p_perfil_id IS NOT NULL THEN
-        IF NOT EXISTS (SELECT 1 FROM seguridad.perfiles WHERE id = p_perfil_id) THEN
-            RETURN jsonb_build_object('success', false, 'message', 'El perfil no existe', 'error_code', 'PERFIL_NO_EXISTE');
-        END IF;
-        SELECT id, nombre INTO v_perfil_data FROM seguridad.perfiles WHERE id = p_perfil_id;
-    ELSE
-        SELECT id, nombre INTO v_perfil_data FROM seguridad.perfiles WHERE id = v_perfil_nuevo_id;
+
+    SELECT id, nombre INTO v_perfil_data
+    FROM seguridad.perfiles WHERE id = v_perfil_nuevo_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El perfil % no existe', v_perfil_nuevo_id USING ERRCODE = 'P0008';
     END IF;
-    
-    -- 9. Verificar que el horario existe (si se cambió)
-    IF p_chorario_id IS NOT NULL THEN
-        IF NOT EXISTS (SELECT 1 FROM seguridad.chorarios WHERE id = p_chorario_id) THEN
-            RETURN jsonb_build_object('success', false, 'message', 'El horario no existe', 'error_code', 'CHORARIO_NO_EXISTE');
-        END IF;
-        SELECT id, nombre INTO v_chorario_data FROM seguridad.chorarios WHERE id = p_chorario_id;
-    ELSE
-        SELECT id, nombre INTO v_chorario_data FROM seguridad.chorarios WHERE id = v_chorario_nuevo_id;
+
+    SELECT id, nombre INTO v_chorario_data
+    FROM seguridad.chorarios WHERE id = v_chorario_nuevo_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El horario % no existe', v_chorario_nuevo_id USING ERRCODE = 'P0009';
     END IF;
-    
-    -- 10. Construir JSON de datos ANTERIORES (con estructura anidada)
+
+    -- 8. Datos ANTERIORES para la auditoría (sin password ni recovery_code)
     v_datos_anteriores := jsonb_build_object(
         'id', v_usuario_actual.id,
         'name', v_usuario_actual.name,
@@ -133,29 +154,17 @@ BEGIN
         'isactive', v_usuario_actual.isactive,
         'islogin', v_usuario_actual.islogin,
         'isreset', v_usuario_actual.isreset,
-        'perfil', jsonb_build_object(
-            'id', v_usuario_actual.perfil_id,
-            'nombre', v_usuario_actual.perfil_nombre
-        ),
-        'chorario', jsonb_build_object(
-            'id', v_usuario_actual.chorario_id,
-            'nombre', v_usuario_actual.chorario_nombre
-        ),
+        'perfil', jsonb_build_object('id', v_usuario_actual.perfil_id, 'nombre', v_usuario_actual.perfil_nombre),
+        'chorario', jsonb_build_object('id', v_usuario_actual.chorario_id, 'nombre', v_usuario_actual.chorario_nombre),
         'created_by', v_usuario_actual.created_by,
         'created_at', to_char(v_usuario_actual.created_at, 'YYYY-MM-DD HH24:MI:SS'),
         'updated_by', v_usuario_actual.updated_by,
         'updated_at', to_char(v_usuario_actual.updated_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'last_login_at', to_char(v_usuario_actual.last_login_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'user_verified_at', to_char(v_usuario_actual.user_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'email_verified_at', to_char(v_usuario_actual.email_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'recovery_code', v_usuario_actual.recovery_code,
-        'recovery_code_expires_at', to_char(v_usuario_actual.recovery_code_expires_at, 'YYYY-MM-DD HH24:MI:SS')
+        'last_login_at', to_char(v_usuario_actual.last_login_at, 'YYYY-MM-DD HH24:MI:SS')
     );
-    
-    -- 11. Guardar datos ANTERIORES en el contexto (ANTES del UPDATE)
     PERFORM set_config('app.datos_anteriores', v_datos_anteriores::TEXT, true);
-    
-    -- 12. Construir JSON de datos NUEVOS (con estructura anidada)
+
+    -- 9. Datos NUEVOS
     v_datos_nuevos := jsonb_build_object(
         'id', p_id,
         'name', TRIM(p_name),
@@ -164,35 +173,23 @@ BEGIN
         'phone', p_phone,
         'login_user', TRIM(p_login_user),
         'avatar', p_avatar,
-        'type_user', COALESCE(p_type_user, v_usuario_actual.type_user),
+        'type_user', v_type_user,
         'isactive', p_isactive,
         'islogin', v_usuario_actual.islogin,
         'isreset', v_usuario_actual.isreset,
-        'perfil', jsonb_build_object(
-            'id', v_perfil_data.id,
-            'nombre', v_perfil_data.nombre
-        ),
-        'chorario', jsonb_build_object(
-            'id', v_chorario_data.id,
-            'nombre', v_chorario_data.nombre
-        ),
+        'perfil', jsonb_build_object('id', v_perfil_data.id, 'nombre', v_perfil_data.nombre),
+        'chorario', jsonb_build_object('id', v_chorario_data.id, 'nombre', v_chorario_data.nombre),
         'created_by', v_usuario_actual.created_by,
         'created_at', to_char(v_usuario_actual.created_at, 'YYYY-MM-DD HH24:MI:SS'),
         'updated_by', COALESCE(p_usuario_login, v_usuario_actual.updated_by),
-        'updated_at', v_fecha_texto,
-        'last_login_at', to_char(v_usuario_actual.last_login_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'user_verified_at', to_char(v_usuario_actual.user_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'email_verified_at', to_char(v_usuario_actual.email_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'recovery_code', v_usuario_actual.recovery_code,
-        'recovery_code_expires_at', to_char(v_usuario_actual.recovery_code_expires_at, 'YYYY-MM-DD HH24:MI:SS')
+        'updated_at', to_char(v_fecha_actual, 'YYYY-MM-DD HH24:MI:SS'),
+        'last_login_at', to_char(v_usuario_actual.last_login_at, 'YYYY-MM-DD HH24:MI:SS')
     );
-    
-    -- 13. Guardar datos NUEVOS en el contexto (ANTES del UPDATE)
     PERFORM set_config('app.datos_nuevos', v_datos_nuevos::TEXT, true);
-    
-    -- 14. Actualizar usuario
+
+    -- 10. Actualizar
     UPDATE seguridad.users
-    SET 
+    SET
         name = TRIM(p_name),
         surname = TRIM(p_surname),
         email = TRIM(p_email),
@@ -200,14 +197,18 @@ BEGIN
         login_user = TRIM(p_login_user),
         avatar = p_avatar,
         isactive = p_isactive,
-        type_user = COALESCE(p_type_user, v_usuario_actual.type_user),
+        type_user = v_type_user,
         perfil_id = v_perfil_nuevo_id,
         chorario_id = v_chorario_nuevo_id,
         updated_at = v_fecha_actual,
         updated_by = COALESCE(p_usuario_login, v_usuario_actual.updated_by)
     WHERE id = p_id;
-    
-    -- 15. Obtener el usuario actualizado
+
+    -- 11. El trigger ya disparó al cerrar el UPDATE: soltamos el contexto.
+    PERFORM set_config('app.datos_anteriores', '', true);
+    PERFORM set_config('app.datos_nuevos', '', true);
+
+    -- 12. Devolver el usuario actualizado (sin password ni recovery_code)
     SELECT jsonb_build_object(
         'success', true,
         'message', 'Usuario actualizado exitosamente',
@@ -223,46 +224,35 @@ BEGIN
             'isactive', u.isactive,
             'islogin', u.islogin,
             'isreset', u.isreset,
-            'perfil', jsonb_build_object(
-                'id', p.id,
-                'nombre', p.nombre
-            ),
-            'chorario', jsonb_build_object(
-                'id', h.id,
-                'nombre', h.nombre
-            ),
+            'perfil_id', u.perfil_id,
+            'perfil_nombre', p.nombre,
+            'chorario_id', u.chorario_id,
+            'chorario_nombre', h.nombre,
+            'perfil', jsonb_build_object('id', p.id, 'nombre', p.nombre),
+            'chorario', jsonb_build_object('id', h.id, 'nombre', h.nombre),
             'created_by', u.created_by,
             'created_at', to_char(u.created_at, 'YYYY-MM-DD HH24:MI:SS'),
             'updated_by', u.updated_by,
             'updated_at', to_char(u.updated_at, 'YYYY-MM-DD HH24:MI:SS'),
             'last_login_at', to_char(u.last_login_at, 'YYYY-MM-DD HH24:MI:SS'),
             'user_verified_at', to_char(u.user_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-            'email_verified_at', to_char(u.email_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-            'recovery_code', u.recovery_code,
-            'recovery_code_expires_at', to_char(u.recovery_code_expires_at, 'YYYY-MM-DD HH24:MI:SS')
+            'email_verified_at', to_char(u.email_verified_at, 'YYYY-MM-DD HH24:MI:SS')
         )
     ) INTO v_resultado
     FROM seguridad.users u
     LEFT JOIN seguridad.perfiles p ON p.id = u.perfil_id
     LEFT JOIN seguridad.chorarios h ON h.id = u.chorario_id
     WHERE u.id = p_id;
-    
+
     RETURN v_resultado;
-    
+
 EXCEPTION
-    WHEN OTHERS THEN
-        -- Limpiar contexto en caso de error
-        PERFORM set_config('app.datos_anteriores', '', true);
-        PERFORM set_config('app.datos_nuevos', '', true);
-        
-        RETURN jsonb_build_object(
-            'success', false,
-            'message', 'Error al actualizar usuario: ' || SQLERRM,
-            'error_code', SQLSTATE
-        );
+    -- Único caso capturado, y se RE-LANZA. Nunca un «WHEN OTHERS».
+    WHEN unique_violation THEN
+        RAISE EXCEPTION 'Ya existe otro usuario con ese login o email'
+            USING ERRCODE = 'P0006';
 END;
 $BODY$;
 
 ALTER FUNCTION seguridad.fn_usuarios_modificar(bigint, character varying, character varying, character varying, character varying, character varying, character varying, boolean, integer, integer, integer, bigint, character varying, character varying, inet, text, uuid)
     OWNER TO postgres;
-

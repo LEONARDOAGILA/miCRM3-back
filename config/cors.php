@@ -16,7 +16,7 @@ return [
     */
 
     //lpaa -> configura todas las rutas para evitar error de cors
-    'paths' => ['api/*','web/*', 'auth/*', 'config/*', 'reporte/*', 'crm/*', 'broadcasting/auth'   , 'sanctum/csrf-cookie'],
+    'paths' => ['api/*','web/*', 'auth/*', 'config/*', 'reporte/*', 'rh/*', 'ventas/*', 'crm/*', 'broadcasting/auth'   , 'sanctum/csrf-cookie'],
 
 
 
@@ -32,7 +32,7 @@ return [
     //'allowed_headers' => ['Authorization', 'Content-Type', 'Custom-Header', '*'],
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    'exposed_headers' => ['Content-Disposition', 'X-Zip-Ficheros', 'X-Zip-Enlaces', 'X-Zip-Omitidos'],   // nombre de fichero y resumen del zip en descargas
 
     'max_age' => 0,
 

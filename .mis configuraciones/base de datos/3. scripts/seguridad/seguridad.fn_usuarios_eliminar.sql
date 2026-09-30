@@ -1,6 +1,23 @@
--- FUNCTION: seguridad.fn_usuarios_eliminar(bigint, bigint, character varying, character varying, inet, text, uuid)
-
--- DROP FUNCTION IF EXISTS seguridad.fn_usuarios_eliminar(bigint, bigint, character varying, character varying, inet, text, uuid);
+-- FUNCTION: seguridad.fn_usuarios_eliminar(...)
+--
+-- ALINEADA AL ESTÁNDAR DE fn_usuarios_crear
+--
+-- 1. SIN «EXCEPTION WHEN OTHERS ... RETURN success:false».
+--    Ese bloque retornaba normalmente tras un fallo, así que la transacción del
+--    llamante seguía viva y era committeable: la integridad dependía de que PHP
+--    mirase 'success'. Ahora todo error se propaga y PostgreSQL aborta.
+--    Solo se captura foreign_key_violation, y para RE-LANZARLA con un mensaje
+--    legible cuando otro módulo referencie al usuario.
+-- 2. Reglas de negocio con RAISE EXCEPTION ... USING ERRCODE.
+-- 3. SET search_path (obligatorio en SECURITY DEFINER con OWNER postgres).
+-- 4. app.datos_anteriores se limpia tras el DELETE: set_config(..., true) dura
+--    toda la transacción y no se limpiaba en el camino feliz, así que la
+--    siguiente tabla auditada heredaba el JSON del usuario.
+-- 5. La auditoría ya no guarda recovery_code.
+--
+-- CÓDIGOS DE ERROR
+--   P0013 el usuario no existe
+--   P0014 no se puede eliminar: tiene registros asociados
 
 CREATE OR REPLACE FUNCTION seguridad.fn_usuarios_eliminar(
 	p_id bigint,
@@ -14,30 +31,27 @@ CREATE OR REPLACE FUNCTION seguridad.fn_usuarios_eliminar(
     LANGUAGE 'plpgsql'
     COST 100
     VOLATILE SECURITY DEFINER PARALLEL UNSAFE
+    SET search_path = pg_catalog, seguridad, auditoria
 AS $BODY$
 DECLARE
     v_datos_anteriores JSONB;
     v_usuario_data RECORD;
-    v_perfil_data RECORD;
-    v_chorario_data RECORD;
-    v_resultado JSONB;
 BEGIN
-    -- 1. Establecer contexto de auditoría
+    -- 1. Contexto de auditoría (lo leen los triggers de seguridad.users)
     PERFORM set_config('app.usuario_id', COALESCE(p_usuario_id::TEXT, ''), true);
     PERFORM set_config('app.usuario_login', COALESCE(p_usuario_login, current_user), true);
     PERFORM set_config('app.usuario_nombre', COALESCE(p_usuario_nombre, current_user), true);
-    PERFORM set_config('app.ip_address', p_ip_address::TEXT, true);
-    PERFORM set_config('app.user_agent', p_user_agent, true);
-    PERFORM set_config('app.request_id', p_request_id::TEXT, true);
+    PERFORM set_config('app.ip_address', COALESCE(p_ip_address::TEXT, ''), true);
+    PERFORM set_config('app.user_agent', COALESCE(p_user_agent, ''), true);
+    PERFORM set_config('app.request_id', COALESCE(p_request_id::TEXT, ''), true);
     PERFORM set_config('app.modulo', 'seguridad.users', true);
-    
-    -- 2. Obtener datos del usuario antes de eliminar (con perfil y horario)
-    SELECT 
+
+    -- 2. Datos del usuario antes de eliminar (con perfil y horario)
+    SELECT
         u.id, u.name, u.surname, u.email, u.phone, u.login_user, u.avatar,
         u.isactive, u.islogin, u.isreset, u.type_user, u.perfil_id, u.chorario_id,
         u.created_by, u.updated_by, u.created_at, u.updated_at,
         u.last_login_at, u.user_verified_at, u.email_verified_at,
-        u.recovery_code, u.recovery_code_expires_at,
         p.nombre as perfil_nombre,
         c.nombre as chorario_nombre
     INTO v_usuario_data
@@ -45,22 +59,13 @@ BEGIN
     LEFT JOIN seguridad.perfiles p ON p.id = u.perfil_id
     LEFT JOIN seguridad.chorarios c ON c.id = u.chorario_id
     WHERE u.id = p_id;
-    
+
     IF NOT FOUND THEN
-        RETURN jsonb_build_object('success', false, 'message', 'El usuario no existe', 'error_code', 'USUARIO_NO_EXISTE');
+        RAISE EXCEPTION 'El usuario no existe' USING ERRCODE = 'P0013';
     END IF;
-    
-    -- 3. Obtener datos del perfil
-    SELECT id, nombre INTO v_perfil_data
-    FROM seguridad.perfiles 
-    WHERE id = v_usuario_data.perfil_id;
-    
-    -- 4. Obtener datos del horario
-    SELECT id, nombre INTO v_chorario_data
-    FROM seguridad.chorarios 
-    WHERE id = v_usuario_data.chorario_id;
-    
-    -- 5. Construir JSON de datos ANTERIORES
+
+    -- 3. Datos ANTERIORES para la auditoría.
+    --    Deliberadamente sin password ni recovery_code.
     v_datos_anteriores := jsonb_build_object(
         'id', v_usuario_data.id,
         'name', v_usuario_data.name,
@@ -73,51 +78,41 @@ BEGIN
         'isactive', v_usuario_data.isactive,
         'islogin', v_usuario_data.islogin,
         'isreset', v_usuario_data.isreset,
-        'perfil', jsonb_build_object(
-            'id', v_perfil_data.id,
-            'nombre', v_perfil_data.nombre
-        ),
-        'chorario', jsonb_build_object(
-            'id', v_chorario_data.id,
-            'nombre', v_chorario_data.nombre
-        ),
+        'perfil', jsonb_build_object('id', v_usuario_data.perfil_id, 'nombre', v_usuario_data.perfil_nombre),
+        'chorario', jsonb_build_object('id', v_usuario_data.chorario_id, 'nombre', v_usuario_data.chorario_nombre),
         'created_by', v_usuario_data.created_by,
         'created_at', to_char(v_usuario_data.created_at, 'YYYY-MM-DD HH24:MI:SS'),
         'updated_by', v_usuario_data.updated_by,
         'updated_at', to_char(v_usuario_data.updated_at, 'YYYY-MM-DD HH24:MI:SS'),
         'last_login_at', to_char(v_usuario_data.last_login_at, 'YYYY-MM-DD HH24:MI:SS'),
         'user_verified_at', to_char(v_usuario_data.user_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'email_verified_at', to_char(v_usuario_data.email_verified_at, 'YYYY-MM-DD HH24:MI:SS'),
-        'recovery_code', v_usuario_data.recovery_code,
-        'recovery_code_expires_at', to_char(v_usuario_data.recovery_code_expires_at, 'YYYY-MM-DD HH24:MI:SS')
+        'email_verified_at', to_char(v_usuario_data.email_verified_at, 'YYYY-MM-DD HH24:MI:SS')
     );
-    
-    -- 6. Guardar datos ANTERIORES en el contexto (ANTES del DELETE)
     PERFORM set_config('app.datos_anteriores', v_datos_anteriores::TEXT, true);
-    
-    -- 7. Eliminar el usuario
+
+    -- 4. Eliminar (seguridad.sesiones_activas cae por ON DELETE CASCADE)
     DELETE FROM seguridad.users WHERE id = p_id;
-    
-    -- 8. Devolver respuesta exitosa con los datos eliminados
+
+    -- 5. El trigger de auditoría ya disparó al cerrar el DELETE: soltamos el
+    --    contexto para no contaminar lo que venga después en esta transacción.
+    PERFORM set_config('app.datos_anteriores', '', true);
+
     RETURN jsonb_build_object(
         'success', true,
         'message', 'Usuario eliminado exitosamente',
         'data', v_datos_anteriores
     );
-    
+
 EXCEPTION
-    WHEN OTHERS THEN
-        -- Limpiar contexto en caso de error
-        PERFORM set_config('app.datos_anteriores', '', true);
-        
-        RETURN jsonb_build_object(
-            'success', false,
-            'message', 'Error al eliminar usuario: ' || SQLERRM,
-            'error_code', SQLSTATE
-        );
+    -- Único caso capturado, y se RE-LANZA. Hoy la única FK hacia users es
+    -- sesiones_activas (ON DELETE CASCADE), pero en cuanto otro esquema
+    -- referencie al usuario conviene un mensaje de negocio en lugar del texto
+    -- crudo del constraint. Nunca un «WHEN OTHERS».
+    WHEN foreign_key_violation THEN
+        RAISE EXCEPTION 'No se puede eliminar el usuario porque tiene registros asociados'
+            USING ERRCODE = 'P0014';
 END;
 $BODY$;
 
 ALTER FUNCTION seguridad.fn_usuarios_eliminar(bigint, bigint, character varying, character varying, inet, text, uuid)
     OWNER TO postgres;
-

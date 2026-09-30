@@ -15,8 +15,8 @@ class VerificarUsuarioActivo
             // 1. Obtener el usuario desde el token JWT
             $user = JWTAuth::parseToken()->authenticate();
 
-            // 2. Validar si el usuario está activo
-            if (!$user || !$user->isactive) {
+            // 2. Validar si el usuario está activo (y no en la papelera de reciclaje)
+            if (!$user || !$user->isactive || $user->deleted_at) {
                 sistemaLog('warning', 'Acceso denegado: Usuario inactivo', [
                     'user_id' => $user->id ?? null,
                     'login_user' => $user->login_user ?? null,
