@@ -5,6 +5,7 @@ use App\Http\Controllers\ventas\ClienteController;
 use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
 use App\Http\Controllers\ventas\CatalogoGestionController;
+use App\Http\Controllers\ventas\ArchivoClienteController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -79,6 +80,22 @@ Route::group([
     Route::post('addAsunto', [CatalogoGestionController::class, 'saveAsunto']);
     Route::post('editAsunto/{id}', [CatalogoGestionController::class, 'saveAsunto']);
     Route::delete('deleteAsunto/{id}', [CatalogoGestionController::class, 'deleteAsunto']);  // si está en uso, desactiva
+});
+
+// ARCHIVOS DEL CLIENTE (fotos del local, contratos, videos de la visita)
+// Los ficheros van a storage/app/public/img/clientes, junto a la foto y el
+// mapa del cliente. 'ver' queda fuera del grupo: la consumen <img src> y
+// <video src>, que no mandan cabeceras, igual que getImagenCliente.
+Route::get('archivoCliente/ver/{id}', [ArchivoClienteController::class, 'ver']);           // ?descargar=1
+
+Route::group([
+    'prefix' => 'archivoCliente', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allArchivos', [ArchivoClienteController::class, 'allArchivos']);            // ?cliente_id&inactivos=0
+    Route::post('subirArchivo', [ArchivoClienteController::class, 'subirArchivo']);         // { cliente_id, archivo }
+    Route::post('addArchivo', [ArchivoClienteController::class, 'addArchivo']);
+    Route::post('editArchivo/{id}', [ArchivoClienteController::class, 'editArchivo']);      // nombre, descripción, orden, activo
+    Route::delete('deleteArchivo/{id}', [ArchivoClienteController::class, 'deleteArchivo']); // registro + fichero
 });
 
 // CONVERSACIONES DE WHATSAPP
