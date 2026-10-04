@@ -6,6 +6,7 @@ use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
 use App\Http\Controllers\ventas\CatalogoGestionController;
 use App\Http\Controllers\ventas\ArchivoClienteController;
+use App\Http\Controllers\ventas\NotaClienteController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -96,6 +97,21 @@ Route::group([
     Route::post('addArchivo', [ArchivoClienteController::class, 'addArchivo']);
     Route::post('editArchivo/{id}', [ArchivoClienteController::class, 'editArchivo']);      // nombre, descripción, orden, activo
     Route::delete('deleteArchivo/{id}', [ArchivoClienteController::class, 'deleteArchivo']); // registro + fichero
+});
+
+// NOTAS DEL CLIENTE (lo que hay que saber de él y no es una gestión)
+// El contenido es HTML del editor; el back lo limpia y guarda aparte el
+// texto plano, que es lo que se busca y lo que se resume en la lista.
+Route::group([
+    'prefix' => 'notaCliente', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allNotas', [NotaClienteController::class, 'allNotas']);                 // ?cliente_id&search
+    Route::post('addNota', [NotaClienteController::class, 'addNota']);
+    Route::post('editNota/{id}', [NotaClienteController::class, 'editNota']);
+    Route::post('fijarNota/{id}', [NotaClienteController::class, 'fijarNota']);         // { fijada? }; sin ella, alterna
+    Route::post('subirImagen', [NotaClienteController::class, 'subirImagen']);       // { cliente_id, imagen } → { id, url }
+    Route::post('traerImagen', [NotaClienteController::class, 'traerImagen']);       // { cliente_id, url } → { id, url }
+    Route::delete('deleteNota/{id}', [NotaClienteController::class, 'deleteNota']);
 });
 
 // CONVERSACIONES DE WHATSAPP

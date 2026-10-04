@@ -101,10 +101,15 @@ class ArchivoClienteController extends Controller
                 return $this->errorResponse('Debe indicar el cliente', 422);
             }
             $incluirInactivos = filter_var($request->query('inactivos', true), FILTER_VALIDATE_BOOLEAN);
+            // Por defecto sólo los de la pestaña: las imágenes pegadas en una nota
+            // viven aquí para no quedar huérfanas, pero no son documentos del cliente.
+            // ?origen=todos las trae también.
+            $origen = (string) $request->query('origen', 'archivo');
+            $origen = in_array($origen, ['archivo', 'nota'], true) ? $origen : null;
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_archivos_clientes_listar(?::BIGINT, ?::BOOLEAN) as result',
-                [$clienteId, $incluirInactivos]
+                'SELECT ventas.fn_archivos_clientes_listar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR) as result',
+                [$clienteId, $incluirInactivos, $origen]
             );
             $r = json_decode($result->result, true);
             return $this->successResponse($r['data'], $r['message']);
@@ -215,6 +220,7 @@ class ArchivoClienteController extends Controller
                 $reglas['extension']  = 'nullable|string|max:20';
                 $reglas['mime']       = 'nullable|string|max:120';
                 $reglas['tamano']     = 'nullable|integer|min:0';
+                $reglas['origen']     = 'nullable|string|in:archivo,nota';
             }
 
             $validator = Validator::make($this->datosDe($request), $reglas, [
@@ -229,7 +235,7 @@ class ArchivoClienteController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_archivos_clientes_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, '
-                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $id,
                     isset($d['cliente_id']) ? (int) $d['cliente_id'] : null,
@@ -242,6 +248,7 @@ class ArchivoClienteController extends Controller
                     isset($d['tamano']) ? (int) $d['tamano'] : null,
                     isset($d['orden']) ? (int) $d['orden'] : null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    $d['origen'] ?? 'archivo',
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
