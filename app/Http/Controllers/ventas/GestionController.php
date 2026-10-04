@@ -27,9 +27,9 @@ use App\Http\Resources\ApiResponder;
  *   POST   ventas/gestion/editGestion/{id}
  *   POST   ventas/gestion/cerrarGestion/{id}       { resultado, nota?, duracion_minutos?, siguiente? }
  *   DELETE ventas/gestion/deleteGestion/{id}
- *   GET    ventas/gestion/agenda?empleado_id&mias&desde&hasta&vencidas&limite
+ *   GET    ventas/gestion/agenda?usuario_id&mias&desde&hasta&vencidas&limite
  *   GET    ventas/gestion/resumen/{cliente_id}
- *   POST   ventas/gestion/reasignar/{cliente_id}   { empleado_id, motivo?, mover_agenda? }
+ *   POST   ventas/gestion/reasignar/{cliente_id}   { usuario_id, motivo?, mover_agenda? }
  *   GET    ventas/gestion/asignaciones/{cliente_id}
  */
 class GestionController extends Controller
@@ -40,7 +40,7 @@ class GestionController extends Controller
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,   // falta un dato obligatorio
         'P0013' => 404,   // el cliente o la gestión no existe
-        'P0016' => 422,   // el empleado no existe
+        'P0016' => 422,   // el usuario no existe
         'P0021' => 409,   // la gestión ya no está pendiente
         'P0022' => 422,   // la fecha no es coherente
     ];
@@ -119,7 +119,7 @@ class GestionController extends Controller
             'asunto_id'         => 'required|integer|exists:pgsql.ventas.gestiones_asuntos,id',
             'asunto'            => 'nullable|string|min:3|max:200',
             'nota'              => 'nullable|string|max:4000',
-            'empleado_id'       => 'nullable|integer',
+            'usuario_id'        => 'nullable|integer|exists:pgsql.seguridad.users,id',
             'contacto_id'       => 'nullable|integer',
             'telefono'          => 'nullable|string|max:20',
             'fecha_programada'  => 'nullable|date',
@@ -161,7 +161,7 @@ class GestionController extends Controller
             $d['asunto'] ?? null,
             !empty($d['asunto_id']) ? (int) $d['asunto_id'] : null,
             $vacioANull($d['nota'] ?? null),
-            !empty($d['empleado_id']) ? (int) $d['empleado_id'] : null,
+            !empty($d['usuario_id']) ? (int) $d['usuario_id'] : null,
             !empty($d['contacto_id']) ? (int) $d['contacto_id'] : null,
             $vacioANull($d['telefono'] ?? null),
             $d['prioridad'] ?? 'MEDIA',
@@ -180,7 +180,7 @@ class GestionController extends Controller
                     ?::VARCHAR,       -- p_asunto
                     ?::BIGINT,        -- p_asunto_id
                     ?::TEXT,          -- p_nota
-                    ?::BIGINT,        -- p_empleado_id
+                    ?::BIGINT,        -- p_usuario_responsable_id
                     ?::BIGINT,        -- p_contacto_id
                     ?::VARCHAR,       -- p_telefono
                     ?::VARCHAR,       -- p_prioridad
@@ -251,13 +251,17 @@ class GestionController extends Controller
      * busca. Los contadores (total, vencidas, hoy) siguen siendo de todo el
      * filtro, no de la página.
      *
-     * ?empleado_id | ?mias=1 | ?desde | ?hasta | ?vencidas=1 | ?search
+     * Ni «mias» ni «usuario_id» son permisos: sólo recortan dentro de lo que
+     * el solicitante ya puede ver. Pedir la agenda de alguien de fuera de su
+     * jerarquía no devuelve nada.
+     *
+     * ?usuario_id | ?mias=1 | ?desde | ?hasta | ?vencidas=1 | ?search
      * ?page | ?per_page
      */
     public function agendaPaginada(Request $request)
     {
         try {
-            $empleadoId = $request->filled('empleado_id') ? (int) $request->input('empleado_id') : null;
+            $usuarioId = $request->filled('usuario_id') ? (int) $request->input('usuario_id') : null;
             $login      = filter_var($request->query('mias', false), FILTER_VALIDATE_BOOLEAN)
                 ? ($request->user()->login_user ?? null)
                 : null;
@@ -268,9 +272,14 @@ class GestionController extends Controller
             $page       = (int) $request->input('page', 1);
             $perPage    = (int) $request->input('per_page', 15);
 
+            // Quién pregunta, que es lo que pone el techo. No se negocia desde
+            // la petición: ni «mias» ni «usuario_id» pueden sacar a nadie de su
+            // jerarquía.
+            [$solicitante] = $this->contextoUsuario();
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER) as result',
-                [$empleadoId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage]
+                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER, ?::BIGINT) as result',
+                [$usuarioId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage, $solicitante]
             );
             $resultado = json_decode($result->result, true);
 
@@ -290,17 +299,25 @@ class GestionController extends Controller
      * sale de una sola función para no encadenar ocho peticiones: en este
      * servidor cada llamada cuesta más que las consultas que hace.
      *
+     * Las cifras son las del ámbito de quien mira —su equipo, o sólo lo suyo
+     * si no manda sobre nadie—, nunca las de toda la empresa. El bloque «mias»
+     * es aparte y siempre personal, y «alcance» dice hasta dónde llega lo que
+     * se está contando.
+     *
      * ?dias=14  cuántos días trae la serie del gráfico (entre 7 y 90)
      */
     public function estadisticas(Request $request)
     {
         try {
-            $login = $request->user()->login_user ?? null;
-            $dias  = (int) $request->query('dias', 14);
+            $dias = (int) $request->query('dias', 14);
+
+            // Quién pregunta: recorta el tablero a su ámbito. El login sólo se
+            // usa para rotular el bloque de «lo mío».
+            [$solicitante, $login] = $this->contextoUsuario();
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_estadisticas_generales(?::VARCHAR, ?::INTEGER) as result',
-                [$login, $dias]
+                'SELECT ventas.fn_estadisticas_generales(?::VARCHAR, ?::INTEGER, ?::BIGINT) as result',
+                [$login, $dias, $solicitante]
             );
             $resultado = json_decode($result->result, true);
 
@@ -330,31 +347,40 @@ class GestionController extends Controller
     /**
      * Lo pendiente: «Lo que toca hacer».
      *
-     * Sin filtros devuelve lo de todos; con mias=1, sólo lo que programó el
-     * usuario autenticado (que es lo que pide la pestaña de la agenda y lo
-     * que dispara el recordatorio). La respuesta lleva la lista y los
-     * contadores: { data: [...], meta: { total, vencidas, hoy, mostradas } }.
+     * Con mias=1, sólo lo que le toca al usuario autenticado (que es lo que
+     * pide la pestaña de la agenda y lo que dispara el recordatorio). Sin
+     * «mias» devuelve lo de la gente de la que responde —no lo de todos—, y a
+     * los administradores sí lo de todos; ese techo lo pone la función a
+     * partir del solicitante. La respuesta lleva la lista y los contadores:
+     * { data: [...], meta: { total, vencidas, hoy, mostradas, ve_de_otros } }.
      *
-     * ?empleado_id&mias=1&desde&hasta&vencidas=1&limite
+     * Aquí había un accidente que tapaba a medias el agujero: $usuario_id se
+     * leía de la petición y acto seguido lo machacaba el destructuring de
+     * contextoUsuario(), así que este endpoint filtraba siempre por uno mismo.
+     * Ya no se machaca, porque el límite lo pone el solicitante y no un
+     * descuido.
+     *
+     * ?usuario_id&mias=1&desde&hasta&vencidas=1&limite
      */
     public function agenda(Request $request)
     {
         try {
-            $empleadoId = $request->filled('empleado_id') ? (int) $request->input('empleado_id') : null;
+            $usuarioId = $request->filled('usuario_id') ? (int) $request->input('usuario_id') : null;
             $desde      = $request->filled('desde') ? $request->input('desde') : null;
             $hasta      = $request->filled('hasta') ? $request->input('hasta') : null;
             $limite     = (int) $request->input('limite', 200);
             $vencidas   = filter_var($request->input('vencidas', false), FILTER_VALIDATE_BOOLEAN);
 
-            // «Lo mío» es lo que yo programé: mientras seguridad.users no
-            // guarde su empleado, el login es lo único que las relaciona
-            [$usuarioId, $usuarioLogin] = $this->contextoUsuario();
+            // «Lo mío» es lo que me toca a mí; apagarlo NO abre la agenda de la
+            // empresa, sólo la de la gente de la que respondo. El techo lo pone
+            // el solicitante dentro de la función.
+            [$solicitante, $usuarioLogin] = $this->contextoUsuario();
             $soloMias = filter_var($request->input('mias', false), FILTER_VALIDATE_BOOLEAN);
             $login    = $soloMias ? $usuarioLogin : null;
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_agenda(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::INTEGER) as result',
-                [$empleadoId, $login, $desde, $hasta, $vencidas, $limite]
+                'SELECT ventas.fn_gestiones_agenda(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::INTEGER, ?::BIGINT) as result',
+                [$usuarioId, $login, $desde, $hasta, $vencidas, $limite, $solicitante]
             );
             $resultado = json_decode($result->result, true);
 
@@ -511,7 +537,7 @@ class GestionController extends Controller
     // ================================================================
 
     /**
-     * Body: { empleado_id (null = quitar), motivo?, mover_agenda?, rol? }
+     * Body: { usuario_id (null = quitar), motivo?, mover_agenda?, rol? }
      *
      * El rol dice con qué papel atiende: VENDEDOR si no se indica, que es como
      * se comportaba antes de que un cliente pudiera tener varios responsables.
@@ -522,12 +548,12 @@ class GestionController extends Controller
     {
         try {
             $validator = Validator::make($this->datosDe($request), [
-                'empleado_id'  => 'present|nullable|integer',
+                'usuario_id'   => 'present|nullable|integer|exists:pgsql.seguridad.users,id',
                 'motivo'       => 'nullable|string|max:1000',
                 'mover_agenda' => 'nullable|boolean',
-                'rol'          => 'nullable|string|in:VENDEDOR,COBRADOR,ASISTENTE',
+                'rol'          => 'nullable|string|in:VENDEDOR,COBRADOR,ASISTENTE,POSTVENTA',
             ], [
-                'empleado_id.present' => 'Debe indicar el empleado',
+                'usuario_id.present' => 'Debe indicar el usuario',
                 'rol.in'              => 'El papel indicado no existe',
             ]);
             if ($validator->fails()) {
@@ -539,14 +565,14 @@ class GestionController extends Controller
                 'SELECT ventas.fn_clientes_reasignar(?::BIGINT, ?::BIGINT, ?::TEXT, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $clienteId,
-                    !empty($d['empleado_id']) ? (int) $d['empleado_id'] : null,
+                    !empty($d['usuario_id']) ? (int) $d['usuario_id'] : null,
                     $d['motivo'] ?? null,
                     array_key_exists('mover_agenda', $d) ? (bool) $d['mover_agenda'] : true,
                     $d['rol'] ?? 'VENDEDOR',
                 ], $this->auditoria($request))
             );
             $resultado = json_decode($result->result, true);
-            sistemaLog('info', 'Cliente reasignado', ['cliente_id' => $clienteId, 'empleado_id' => $d['empleado_id'] ?? null]);
+            sistemaLog('info', 'Cliente reasignado', ['cliente_id' => $clienteId, 'usuario_id' => $d['usuario_id'] ?? null]);
             return $this->successResponse($resultado['data'], $resultado['message']);
 
         } catch (QueryException $e) {
