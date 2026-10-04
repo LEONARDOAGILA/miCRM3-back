@@ -207,10 +207,13 @@ class GestionController extends Controller
             $estado    = $request->filled('estado') ? $request->input('estado') : null;
             $desde     = $request->filled('desde')  ? $request->input('desde')  : null;
             $hasta     = $request->filled('hasta')  ? $request->input('hasta')  : null;
+            // Los dos filtros del historial: cómo terminó y quién la registró
+            $resultado  = $request->filled('resultado')  ? $request->input('resultado')  : null;
+            $creadoPor  = $request->filled('creado_por') ? $request->input('creado_por') : null;
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE) as result',
-                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta]
+                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::VARCHAR) as result',
+                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $creadoPor]
             );
             $resultado = json_decode($result->result, true);
 
