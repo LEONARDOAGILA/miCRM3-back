@@ -59,6 +59,33 @@ class NotaClienteController extends Controller
         . '<table><thead><tbody><tfoot><tr><td><th><colgroup><col><caption>';
 
     /**
+     * Las propiedades de css que se dejan pasar dentro de un style.
+     *
+     * strip_tags conserva TODOS los atributos de las etiquetas que deja, así
+     * que hasta ahora el style entraba tal cual. Con el color bastaba, pero el
+     * editor ya manda también la letra y el tamaño por ahí (ver esquemaNotas.ts),
+     * y un style sin filtrar es una rendija cómoda: position:fixed para tapar la
+     * pantalla, o un url(...) que se trae un pixel de seguimiento de fuera.
+     *
+     * Lista blanca, no negra: lo que no esté aquí se cae. Es la única forma que
+     * no hay que ampliar cada vez que alguien inventa una propiedad nueva.
+     *
+     * Cada una está porque algo la usa:
+     *   · color, background-color ... los dos botones de color de la barra
+     *   · text-align ............... alinear (el párrafo lo guarda así)
+     *   · font-family, font-size ... los desplegables de letra y tamaño
+     *   · font-weight, font-style,
+     *     text-decoration .......... lo que llega al pegar de Word
+     *   · width .................... el ancho de columna de las tablas, que
+     *                                prosemirror-tables guarda en el <col>
+     */
+    private const ESTILOS_PERMITIDOS = [
+        'color', 'background-color', 'text-align',
+        'font-family', 'font-size', 'font-weight', 'font-style',
+        'text-decoration', 'width',
+    ];
+
+    /**
      * De dónde puede venir una imagen de una nota.
      *
      * Sólo de nuestro propio endpoint. Así se cae todo lo demás:
@@ -116,6 +143,76 @@ class NotaClienteController extends Controller
      * atributos, así que un <a onclick="…"> sobreviviría: por eso se barren
      * después todos los on* y cualquier href/src que apunte a javascript:.
      */
+    /**
+     * Deja en cada style sólo las propiedades permitidas.
+     *
+     * Se reescribe el atributo entero en vez de buscar lo malo y quitarlo: así
+     * lo que sale está hecho aquí, declaración por declaración, y no queda nada
+     * del original que se haya pasado por alto.
+     *
+     * Un style que se queda sin nada se va completo, para no dejar style=""
+     * sembrado por toda la nota.
+     */
+    private function limpiarEstilos(string $html): string
+    {
+        $resultado = preg_replace_callback(
+            '/\sstyle\s*=\s*("([^"]*)"|\'([^\']*)\')/i',
+            function ($m) {
+                // Una de las dos comillas casó; la otra viene vacía o sin poner
+                $bruto = ($m[2] ?? '') !== '' ? $m[2] : ($m[3] ?? '');
+
+                // Las entidades se deshacen ANTES de partir por el punto y coma,
+                // porque «&quot;» lleva uno dentro.
+                //
+                // Sin esto, «font-family: Georgia, &quot;Times New Roman&quot;,
+                // serif» se partía en tres y sólo sobrevivía «font-family:
+                // Georgia, &quot»: el navegador normaliza las comillas simples de
+                // una familia a comillas dobles, así que a una letra con el nombre
+                // de dos palabras le pasaba siempre.
+                $bruto = html_entity_decode($bruto, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                $buenas = [];
+
+                foreach (explode(';', $bruto) as $declaracion) {
+                    $partes = explode(':', $declaracion, 2);
+                    if (count($partes) !== 2) {
+                        continue;
+                    }
+
+                    $propiedad = strtolower(trim($partes[0]));
+                    $valor = trim($partes[1]);
+
+                    if (!in_array($propiedad, self::ESTILOS_PERMITIDOS, true)) {
+                        continue;
+                    }
+                    if ($valor === '' || mb_strlen($valor) > 120) {
+                        continue;
+                    }
+                    // url() se trae algo de fuera; expression() lo ejecutaba el
+                    // IE viejo; la barra invertida sirve para disfrazar las dos
+                    if (preg_match('/url\s*\(|expression|javascript|@import|\\\\/i', $valor)) {
+                        continue;
+                    }
+
+                    // Y se vuelven a poner al escribir el atributo: la comilla
+                    // doble lo rompería, y el & suelto dejaría una entidad a
+                    // medias. Así «font-family: "Times New Roman"» se conserva.
+                    $valor = htmlspecialchars($valor, ENT_COMPAT | ENT_HTML5, 'UTF-8');
+
+                    $buenas[] = $propiedad . ': ' . $valor;
+                }
+
+                return $buenas
+                    ? ' style="' . implode('; ', $buenas) . '"'
+                    : '';
+            },
+            $html
+        );
+
+        // preg_replace_callback devuelve null si la expresión falla; antes de
+        // dejar la nota sin estilos, mejor dejarla como estaba
+        return $resultado ?? $html;
+    }
+
     private function limpiarHtml(?string $html): string
     {
         // Primero fuera los elementos CON SU CONTENIDO. strip_tags sólo quita las
@@ -127,6 +224,8 @@ class NotaClienteController extends Controller
         $limpio = strip_tags($limpio, self::ETIQUETAS_PERMITIDAS);
         // Atributos que ejecutan algo: onclick, onerror, onload…
         $limpio = preg_replace('/\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $limpio);
+        // Y del style, sólo las propiedades de la lista blanca
+        $limpio = $this->limpiarEstilos($limpio);
         // Enlaces e imágenes que ejecutan: javascript:, vbscript:, data:text/html
         $limpio = preg_replace('/\s(href|src)\s*=\s*("|\')?\s*(javascript|vbscript|data)\s*:[^"\'>]*("|\')?/i', '', $limpio);
 

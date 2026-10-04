@@ -19,7 +19,7 @@ use App\Http\Controllers\ventas\NotaClienteController;
 Route::group([
     'prefix' => 'cliente',
 ], function () {
-    Route::get('allClientes', [ClienteController::class, 'allClientes'])->middleware(['jwt.auth', 'usuario.activo']);        // paginado: ?page&per_page&search
+    Route::get('allClientes', [ClienteController::class, 'allClientes'])->middleware(['jwt.auth', 'usuario.activo']);        // paginado: ?page&per_page&search&estado
     Route::get('listClientes', [ClienteController::class, 'listClientes'])->middleware(['jwt.auth', 'usuario.activo']);      // lista simple: ?activos=0
     Route::get('findByIdCliente/{id}', [ClienteController::class, 'findByIdCliente'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addCliente', [ClienteController::class, 'addCliente'])->middleware(['jwt.auth', 'usuario.activo']);

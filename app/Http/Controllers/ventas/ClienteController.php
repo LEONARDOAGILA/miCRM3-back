@@ -240,7 +240,19 @@ class ClienteController extends Controller
             $perPage = (int) $request->input('per_page', 15);
             $search  = (string) $request->input('search', '');
 
-            $result = DB::selectOne('SELECT ventas.fn_clientes_listar_paginado(?, ?, ?) as result', [$page, $perPage, $search]);
+            // El filtro por estado de la pantalla de gestión. Se valida aquí
+            // contra los mismos valores que admite ck_clientes_estado: lo que no
+            // esté en la lista se ignora y se devuelven todos, que es menos
+            // molesto que un error por un parámetro que el usuario no escribió.
+            $estado = strtoupper(trim((string) $request->input('estado', '')));
+            if (!in_array($estado, ['ACTIVO', 'INACTIVO', 'SUSPENDIDO', 'MOROSO'], true)) {
+                $estado = null;
+            }
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_listar_paginado(?, ?, ?, ?) as result',
+                [$page, $perPage, $search, $estado]
+            );
             $resultado = json_decode($result->result, true);
             if (isset($resultado['success']) && $resultado['success'] === false) {
                 return $this->errorResponse($resultado['message'], 500);
