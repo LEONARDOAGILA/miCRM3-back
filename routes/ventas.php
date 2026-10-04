@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ventas\ClienteController;
 use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
+use App\Http\Controllers\ventas\CatalogoGestionController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -58,6 +59,26 @@ Route::group([
     Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda?, rol? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
     Route::get('responsables/{clienteId}', [GestionController::class, 'responsables']);  // quién lo atiende ahora, por papel
+});
+
+// CATÁLOGO DE GESTIÓN (tipos y sus asuntos)
+// El asunto de una gestión se elige de aquí, no se escribe: es lo que
+// permite tabularlo después. 'catalogo' es lo que carga el formulario de
+// gestión; el resto lo usa la pantalla de mantenimiento.
+Route::group([
+    'prefix' => 'catalogoGestion', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('catalogo', [CatalogoGestionController::class, 'catalogo']);                  // tipos activos + sus asuntos activos
+
+    Route::get('allTipos', [CatalogoGestionController::class, 'allTipos']);                  // ?inactivos=0
+    Route::post('addTipo', [CatalogoGestionController::class, 'saveTipo']);
+    Route::post('editTipo/{id}', [CatalogoGestionController::class, 'saveTipo']);
+    Route::delete('deleteTipo/{id}', [CatalogoGestionController::class, 'deleteTipo']);      // si está en uso, desactiva
+
+    Route::get('allAsuntos', [CatalogoGestionController::class, 'allAsuntos']);              // ?tipo_id&inactivos=0
+    Route::post('addAsunto', [CatalogoGestionController::class, 'saveAsunto']);
+    Route::post('editAsunto/{id}', [CatalogoGestionController::class, 'saveAsunto']);
+    Route::delete('deleteAsunto/{id}', [CatalogoGestionController::class, 'deleteAsunto']);  // si está en uso, desactiva
 });
 
 // CONVERSACIONES DE WHATSAPP

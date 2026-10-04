@@ -104,10 +104,20 @@ class GestionController extends Controller
     {
         return [
             'cliente_id'        => 'required|integer',
-            'tipo'              => 'nullable|string|in:LLAMADA,WHATSAPP,CORREO,VISITA,REUNION,OTRO',
+            // El tipo sale del catálogo, no de una lista escrita aquí: si no, dar
+            // de alta un tipo nuevo exigiría tocar código.
+            //
+            // El «pgsql.» del principio no sobra: exists: se queda con lo que hay
+            // antes del primer punto como NOMBRE DE CONEXIÓN, así que sin él
+            // Laravel busca una conexión llamada «ventas» y revienta.
+            'tipo'              => 'nullable|string|exists:pgsql.ventas.gestiones_tipos,codigo',
             'estado'            => 'nullable|string|in:PENDIENTE,REALIZADA,CANCELADA',
             'prioridad'         => 'nullable|string|in:ALTA,MEDIA,BAJA',
-            'asunto'            => 'required|string|min:3|max:200',
+            // Aquí se decide que el usuario NO escriba el asunto: por esta puerta
+            // entra el formulario y se le exige el del catálogo. El texto pasa a
+            // ser opcional porque lo rellena la función con el nombre del asunto.
+            'asunto_id'         => 'required|integer|exists:pgsql.ventas.gestiones_asuntos,id',
+            'asunto'            => 'nullable|string|min:3|max:200',
             'nota'              => 'nullable|string|max:4000',
             'empleado_id'       => 'nullable|integer',
             'contacto_id'       => 'nullable|integer',
@@ -128,7 +138,9 @@ class GestionController extends Controller
             'cliente_id.required'   => 'Debe seleccionar un cliente',
             'asunto.required'       => 'El asunto es obligatorio',
             'asunto.min'            => 'El asunto debe tener al menos 3 caracteres',
-            'tipo.in'               => 'El tipo de gestión no es válido',
+            'tipo.exists'           => 'El tipo de gestión no está en el catálogo',
+            'asunto_id.required'    => 'Debe elegir el asunto de la lista',
+            'asunto_id.exists'      => 'El asunto elegido ya no está en el catálogo',
             'estado.in'             => 'El estado de la gestión no es válido',
             'prioridad.in'          => 'La prioridad no es válida',
             'resultado.in'          => 'El resultado no es válido',
@@ -146,7 +158,8 @@ class GestionController extends Controller
         $datos = [
             $d['tipo'] ?? 'LLAMADA',
             $d['estado'] ?? 'REALIZADA',
-            $d['asunto'],
+            $d['asunto'] ?? null,
+            !empty($d['asunto_id']) ? (int) $d['asunto_id'] : null,
             $vacioANull($d['nota'] ?? null),
             !empty($d['empleado_id']) ? (int) $d['empleado_id'] : null,
             !empty($d['contacto_id']) ? (int) $d['contacto_id'] : null,
@@ -165,6 +178,7 @@ class GestionController extends Controller
                     ?::VARCHAR,       -- p_tipo
                     ?::VARCHAR,       -- p_estado
                     ?::VARCHAR,       -- p_asunto
+                    ?::BIGINT,        -- p_asunto_id
                     ?::TEXT,          -- p_nota
                     ?::BIGINT,        -- p_empleado_id
                     ?::BIGINT,        -- p_contacto_id
