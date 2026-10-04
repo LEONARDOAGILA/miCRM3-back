@@ -116,6 +116,8 @@ class GestionController extends Controller
             'fecha_realizada'   => 'nullable|date',
             'duracion_minutos'  => 'nullable|integer|min:0|max:1440',
             'resultado'         => 'nullable|string|in:CONTACTADO,NO_CONTESTA,BUZON,NUMERO_ERRADO,VOLVER_A_LLAMAR,INTERESADO,NO_INTERESADO,COTIZACION,VENTA,RECLAMO,OTRO',
+            // Cómo la registró el vendedor; queda guardado para los reportes
+            'modo_registro'     => 'nullable|string|in:AHORA,YA_HECHA,PROGRAMADA',
         ];
     }
 
@@ -130,6 +132,7 @@ class GestionController extends Controller
             'estado.in'             => 'El estado de la gestión no es válido',
             'prioridad.in'          => 'La prioridad no es válida',
             'resultado.in'          => 'El resultado no es válido',
+            'modo_registro.in'      => 'El modo de registro no es válido',
             'duracion_minutos.max'  => 'La duración no puede superar los 1440 minutos',
             'fecha_programada.date' => 'La fecha programada no es válida',
             'fecha_realizada.date'  => 'La fecha de realización no es válida',
@@ -153,6 +156,7 @@ class GestionController extends Controller
             $vacioANull($d['fecha_realizada'] ?? null),
             isset($d['duracion_minutos']) && $d['duracion_minutos'] !== '' ? (int) $d['duracion_minutos'] : null,
             $vacioANull($d['resultado'] ?? null),
+            $vacioANull($d['modo_registro'] ?? null),
         ];
         return $conCliente ? array_merge([(int) $d['cliente_id']], $datos) : $datos;
     }
@@ -169,7 +173,8 @@ class GestionController extends Controller
                     ?::TIMESTAMPTZ,   -- p_fecha_programada
                     ?::TIMESTAMPTZ,   -- p_fecha_realizada
                     ?::INTEGER,       -- p_duracion_minutos
-                    ?::VARCHAR        -- p_resultado
+                    ?::VARCHAR,       -- p_resultado
+                    ?::VARCHAR        -- p_modo_registro
     ';
 
     // ================================================================
@@ -488,7 +493,14 @@ class GestionController extends Controller
     // CARTERA (reasignar el cliente a otro vendedor)
     // ================================================================
 
-    /** Body: { empleado_id (null = quitar), motivo?, mover_agenda? } */
+    /**
+     * Body: { empleado_id (null = quitar), motivo?, mover_agenda?, rol? }
+     *
+     * El rol dice con qué papel atiende: VENDEDOR si no se indica, que es como
+     * se comportaba antes de que un cliente pudiera tener varios responsables.
+     * La lista de roles no está en la base a propósito (ver el .sql), así que
+     * se valida aquí.
+     */
     public function reasignar(Request $request, $clienteId)
     {
         try {
@@ -496,8 +508,10 @@ class GestionController extends Controller
                 'empleado_id'  => 'present|nullable|integer',
                 'motivo'       => 'nullable|string|max:1000',
                 'mover_agenda' => 'nullable|boolean',
+                'rol'          => 'nullable|string|in:VENDEDOR,COBRADOR,ASISTENTE',
             ], [
-                'empleado_id.present' => 'Debe indicar el vendedor',
+                'empleado_id.present' => 'Debe indicar el empleado',
+                'rol.in'              => 'El papel indicado no existe',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
@@ -505,12 +519,13 @@ class GestionController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_clientes_reasignar(?::BIGINT, ?::BIGINT, ?::TEXT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT ventas.fn_clientes_reasignar(?::BIGINT, ?::BIGINT, ?::TEXT, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $clienteId,
                     !empty($d['empleado_id']) ? (int) $d['empleado_id'] : null,
                     $d['motivo'] ?? null,
                     array_key_exists('mover_agenda', $d) ? (bool) $d['mover_agenda'] : true,
+                    $d['rol'] ?? 'VENDEDOR',
                 ], $this->auditoria($request))
             );
             $resultado = json_decode($result->result, true);
@@ -527,7 +542,22 @@ class GestionController extends Controller
         }
     }
 
-    /** Por qué vendedores ha pasado el cliente. */
+    /** Quién atiende al cliente ahora mismo, en cada papel. */
+    public function responsables($clienteId)
+    {
+        try {
+            $result = DB::selectOne('SELECT ventas.fn_clientes_responsables(?::BIGINT) as result', [(int) $clienteId]);
+            $resultado = json_decode($result->result, true);
+            return $resultado['success']
+                ? $this->successResponse($resultado['data'], $resultado['message'])
+                : $this->errorResponse($resultado['message'], 404);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en responsables', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
+            return $this->errorResponse('Ocurrió un error al obtener los responsables', 500);
+        }
+    }
+
+    /** Por qué manos ha pasado el cliente, en cualquiera de los papeles. */
     public function asignaciones($clienteId)
     {
         try {

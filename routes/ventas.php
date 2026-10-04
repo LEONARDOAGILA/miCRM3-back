@@ -55,8 +55,9 @@ Route::group([
     Route::delete('deleteGestion/{id}', [GestionController::class, 'deleteGestion']);
 
     // Cartera
-    Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda? }
+    Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda?, rol? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
+    Route::get('responsables/{clienteId}', [GestionController::class, 'responsables']);  // quién lo atiende ahora, por papel
 });
 
 // CONVERSACIONES DE WHATSAPP
