@@ -34,7 +34,19 @@ return [
 
     'exposed_headers' => ['Content-Disposition', 'X-Zip-Ficheros', 'X-Zip-Enlaces', 'X-Zip-Omitidos'],   // nombre de fichero y resumen del zip en descargas
 
-    'max_age' => 0,
+    /*
+     * Cuánto puede el navegador guardarse la respuesta del preflight.
+     *
+     * Estaba en 0, o sea «no te lo guardes»: como el front y la API están en
+     * origenes distintos y toda peticion lleva Authorization, el navegador
+     * mandaba un OPTIONS ANTES DE CADA GET. Son el doble de idas y vueltas
+     * contra un servidor que las atiende de una en una.
+     *
+     * Con 24 horas el preflight se pide una vez por url y metodo. Ojo: la
+     * cache va por url completa, asi que no ahorra la primera visita a un
+     * cliente, pero si todas las siguientes.
+     */
+    'max_age' => 86400,
 
     //'supports_credentials' => false,
     'supports_credentials' => true,

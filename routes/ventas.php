@@ -4,6 +4,9 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ventas\ClienteController;
 use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
+use App\Http\Controllers\ventas\CatalogoGestionController;
+use App\Http\Controllers\ventas\ArchivoClienteController;
+use App\Http\Controllers\ventas\NotaClienteController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -16,7 +19,7 @@ use App\Http\Controllers\ventas\WhatsappController;
 Route::group([
     'prefix' => 'cliente',
 ], function () {
-    Route::get('allClientes', [ClienteController::class, 'allClientes'])->middleware(['jwt.auth', 'usuario.activo']);        // paginado: ?page&per_page&search
+    Route::get('allClientes', [ClienteController::class, 'allClientes'])->middleware(['jwt.auth', 'usuario.activo']);        // paginado: ?page&per_page&search&estado
     Route::get('listClientes', [ClienteController::class, 'listClientes'])->middleware(['jwt.auth', 'usuario.activo']);      // lista simple: ?activos=0
     Route::get('findByIdCliente/{id}', [ClienteController::class, 'findByIdCliente'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addCliente', [ClienteController::class, 'addCliente'])->middleware(['jwt.auth', 'usuario.activo']);
@@ -55,8 +58,60 @@ Route::group([
     Route::delete('deleteGestion/{id}', [GestionController::class, 'deleteGestion']);
 
     // Cartera
-    Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda? }
+    Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda?, rol? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
+    Route::get('responsables/{clienteId}', [GestionController::class, 'responsables']);  // quién lo atiende ahora, por papel
+});
+
+// CATÁLOGO DE GESTIÓN (tipos y sus asuntos)
+// El asunto de una gestión se elige de aquí, no se escribe: es lo que
+// permite tabularlo después. 'catalogo' es lo que carga el formulario de
+// gestión; el resto lo usa la pantalla de mantenimiento.
+Route::group([
+    'prefix' => 'catalogoGestion', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('catalogo', [CatalogoGestionController::class, 'catalogo']);                  // tipos activos + sus asuntos activos
+
+    Route::get('allTipos', [CatalogoGestionController::class, 'allTipos']);                  // ?inactivos=0
+    Route::post('addTipo', [CatalogoGestionController::class, 'saveTipo']);
+    Route::post('editTipo/{id}', [CatalogoGestionController::class, 'saveTipo']);
+    Route::delete('deleteTipo/{id}', [CatalogoGestionController::class, 'deleteTipo']);      // si está en uso, desactiva
+
+    Route::get('allAsuntos', [CatalogoGestionController::class, 'allAsuntos']);              // ?tipo_id&inactivos=0
+    Route::post('addAsunto', [CatalogoGestionController::class, 'saveAsunto']);
+    Route::post('editAsunto/{id}', [CatalogoGestionController::class, 'saveAsunto']);
+    Route::delete('deleteAsunto/{id}', [CatalogoGestionController::class, 'deleteAsunto']);  // si está en uso, desactiva
+});
+
+// ARCHIVOS DEL CLIENTE (fotos del local, contratos, videos de la visita)
+// Los ficheros van a storage/app/public/img/clientes, junto a la foto y el
+// mapa del cliente. 'ver' queda fuera del grupo: la consumen <img src> y
+// <video src>, que no mandan cabeceras, igual que getImagenCliente.
+Route::get('archivoCliente/ver/{id}', [ArchivoClienteController::class, 'ver']);           // ?descargar=1
+
+Route::group([
+    'prefix' => 'archivoCliente', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allArchivos', [ArchivoClienteController::class, 'allArchivos']);            // ?cliente_id&inactivos=0
+    Route::post('subirArchivo', [ArchivoClienteController::class, 'subirArchivo']);         // { cliente_id, archivo }
+    Route::post('addArchivo', [ArchivoClienteController::class, 'addArchivo']);
+    Route::post('editArchivo/{id}', [ArchivoClienteController::class, 'editArchivo']);      // nombre, descripción, orden, activo
+    Route::delete('deleteArchivo/{id}', [ArchivoClienteController::class, 'deleteArchivo']); // registro + fichero
+});
+
+// NOTAS DEL CLIENTE (lo que hay que saber de él y no es una gestión)
+// El contenido es HTML del editor; el back lo limpia y guarda aparte el
+// texto plano, que es lo que se busca y lo que se resume en la lista.
+Route::group([
+    'prefix' => 'notaCliente', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allNotas', [NotaClienteController::class, 'allNotas']);                 // ?cliente_id&search
+    Route::post('addNota', [NotaClienteController::class, 'addNota']);
+    Route::post('editNota/{id}', [NotaClienteController::class, 'editNota']);
+    Route::post('fijarNota/{id}', [NotaClienteController::class, 'fijarNota']);         // { fijada? }; sin ella, alterna
+    Route::post('subirImagen', [NotaClienteController::class, 'subirImagen']);       // { cliente_id, imagen } → { id, url }
+    Route::post('traerImagen', [NotaClienteController::class, 'traerImagen']);       // { cliente_id, url } → { id, url }
+    Route::delete('deleteNota/{id}', [NotaClienteController::class, 'deleteNota']);
 });
 
 // CONVERSACIONES DE WHATSAPP

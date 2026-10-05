@@ -107,7 +107,9 @@ class ClienteController extends Controller
             'fecha_nacimiento'      => 'nullable|date_format:Y-m-d',
             'genero'                => 'nullable|string|in:M,F,O',
             'direccion'             => 'nullable|string|max:1000',
-            'vendedor_id'           => 'nullable|integer',
+            // El vendedor es un USUARIO del sistema: es quien atiende al
+            // cliente y a quien le aparecen sus gestiones en la agenda
+            'vendedor_id'           => 'nullable|integer|exists:pgsql.seguridad.users,id',
             'forma_pago'            => 'nullable|string|in:EFECTIVO,TRANSFERENCIA,TARJETA,CHEQUE,CREDITO',
             'limite_credito'        => 'nullable|numeric|min:0|max:9999999999',
             'dias_credito'          => 'nullable|integer|min:0|max:365',
@@ -240,7 +242,26 @@ class ClienteController extends Controller
             $perPage = (int) $request->input('per_page', 15);
             $search  = (string) $request->input('search', '');
 
-            $result = DB::selectOne('SELECT ventas.fn_clientes_listar_paginado(?, ?, ?) as result', [$page, $perPage, $search]);
+            // El filtro por estado de la pantalla de gestión. Se valida aquí
+            // contra los mismos valores que admite ck_clientes_estado: lo que no
+            // esté en la lista se ignora y se devuelven todos, que es menos
+            // molesto que un error por un parámetro que el usuario no escribió.
+            $estado = strtoupper(trim((string) $request->input('estado', '')));
+            if (!in_array($estado, ['ACTIVO', 'INACTIVO', 'SUSPENDIDO', 'MOROSO'], true)) {
+                $estado = null;
+            }
+
+            // Sólo la cartera de quien entra. Va por bandera y no siempre, porque
+            // la pantalla de Ventas > Clientes tiene que verlos todos para poder
+            // repartir los que aún no tienen dueño: si el filtro fuera global, no
+            // habría forma de asignar a nadie.
+            $soloMios  = filter_var($request->query('mios', false), FILTER_VALIDATE_BOOLEAN);
+            $usuarioId = $soloMios ? ($request->user()->id ?? null) : null;
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_listar_paginado(?, ?, ?, ?, ?) as result',
+                [$page, $perPage, $search, $estado, $usuarioId]
+            );
             $resultado = json_decode($result->result, true);
             if (isset($resultado['success']) && $resultado['success'] === false) {
                 return $this->errorResponse($resultado['message'], 500);
