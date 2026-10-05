@@ -73,6 +73,30 @@ class GestionController extends Controller
         ];
     }
 
+    /**
+     * Si quien pregunta es administrador.
+     *
+     * Manda `es_administrador` del GRUPO, que es la misma señal con la que se
+     * recortan la lista de clientes, la agenda y el tablero. No se mira
+     * users.type_user: ése lo pone quien crea el usuario y puede quedarse
+     * atrás si luego se le cambia de grupo. La pantalla sí lo usa, pero para
+     * decidir qué enseña, que es otra cosa.
+     */
+    private function esAdministrador(): bool
+    {
+        $id = auth('api')->user()->id ?? null;
+        if (!$id) { return false; }
+
+        $fila = DB::selectOne(
+            'SELECT COALESCE(g.es_administrador, false) AS admin
+               FROM seguridad.users u
+               LEFT JOIN seguridad.grupos g ON g.id = u.grupo_id
+              WHERE u.id = ?::BIGINT',
+            [(int) $id]
+        );
+        return (bool) ($fila->admin ?? false);
+    }
+
     /** Los mismos marcadores de auditoría que usan las demás funciones. */
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
 
@@ -547,6 +571,17 @@ class GestionController extends Controller
     public function reasignar(Request $request, $clienteId)
     {
         try {
+            // Repartir clientes es cosa de administradores. En la pantalla la
+            // pestaña de Asignación ni se enseña al resto, pero eso es lo que
+            // se ve: la ruta sigue existiendo y aquí es donde se cierra.
+            if (!$this->esAdministrador()) {
+                sistemaLog('warning', 'Reasignación rechazada: no es administrador', [
+                    'cliente_id' => $clienteId,
+                    'usuario'    => $request->user()->login_user ?? null,
+                ]);
+                return $this->errorResponse('Sólo un administrador puede cambiar quién atiende al cliente', 403);
+            }
+
             $validator = Validator::make($this->datosDe($request), [
                 'usuario_id'   => 'present|nullable|integer|exists:pgsql.seguridad.users,id',
                 'motivo'       => 'nullable|string|max:1000',
