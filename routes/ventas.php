@@ -5,6 +5,7 @@ use App\Http\Controllers\ventas\ClienteController;
 use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
 use App\Http\Controllers\ventas\CatalogoGestionController;
+use App\Http\Controllers\ventas\WhatsappPlantillaController;
 use App\Http\Controllers\ventas\ArchivoClienteController;
 use App\Http\Controllers\ventas\NotaClienteController;
 
@@ -81,6 +82,18 @@ Route::group([
     Route::post('addAsunto', [CatalogoGestionController::class, 'saveAsunto']);
     Route::post('editAsunto/{id}', [CatalogoGestionController::class, 'saveAsunto']);
     Route::delete('deleteAsunto/{id}', [CatalogoGestionController::class, 'deleteAsunto']);  // si está en uso, desactiva
+});
+
+// PLANTILLAS DE WHATSAPP
+// Los mensajes que se ofrecen al escribirle a un cliente. Estaban escritos en
+// el código del front; ahora se mantienen desde la pantalla.
+Route::group([
+    'prefix' => 'whatsappPlantilla', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allPlantillas', [WhatsappPlantillaController::class, 'allPlantillas']);          // ?inactivos=0 para el menú
+    Route::post('addPlantilla', [WhatsappPlantillaController::class, 'savePlantilla']);
+    Route::post('editPlantilla/{id}', [WhatsappPlantillaController::class, 'savePlantilla']);
+    Route::delete('deletePlantilla/{id}', [WhatsappPlantillaController::class, 'deletePlantilla']);
 });
 
 // ARCHIVOS DEL CLIENTE (fotos del local, contratos, videos de la visita)

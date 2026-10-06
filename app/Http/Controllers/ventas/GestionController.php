@@ -538,10 +538,27 @@ class GestionController extends Controller
     public function deleteGestion(Request $request, $id)
     {
         try {
+            // Los adjuntos se van con la gestión por el cascade de la clave
+            // ajena, pero el cascade sólo borra FILAS: los ficheros se
+            // quedarían en el disco para siempre, sin nada que los nombre. Se
+            // anotan ANTES de borrar, que después ya no hay forma de saber
+            // cuáles eran.
+            $adjuntos = DB::select(
+                'SELECT archivo FROM ventas.archivos_clientes WHERE gestion_id = ?',
+                [(int) $id]
+            );
+
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id], $this->auditoria($request))
             );
+
+            // Y se borran después, con la fila ya ida: al revés, si el borrado
+            // fallara, la gestión seguiría enseñando adjuntos que ya no están.
+            foreach ($adjuntos as $a) {
+                $ruta = storage_path('app/public/img/clientes/' . $a->archivo);
+                if ($a->archivo && file_exists($ruta)) { @unlink($ruta); }
+            }
             $resultado = json_decode($result->result, true);
             sistemaLog('info', 'Gestión eliminada', ['gestion_id' => $id]);
             return $this->successResponse($resultado['data'], $resultado['message']);
