@@ -96,20 +96,23 @@ class ArchivoClienteController extends Controller
     public function allArchivos(Request $request)
     {
         try {
+            // Con ?gestion_id= se piden los adjuntos de esa gestión y el cliente
+            // sobra: la gestión ya sabe de quién es.
+            $gestionId = (int) $request->query('gestion_id');
             $clienteId = (int) $request->query('cliente_id');
-            if (!$clienteId) {
+            if (!$clienteId && !$gestionId) {
                 return $this->errorResponse('Debe indicar el cliente', 422);
             }
             $incluirInactivos = filter_var($request->query('inactivos', true), FILTER_VALIDATE_BOOLEAN);
             // Por defecto sólo los de la pestaña: las imágenes pegadas en una nota
-            // viven aquí para no quedar huérfanas, pero no son documentos del cliente.
-            // ?origen=todos las trae también.
+            // y los adjuntos de una gestión viven aquí para no quedar huérfanos,
+            // pero no son documentos del cliente. ?origen=todos los trae también.
             $origen = (string) $request->query('origen', 'archivo');
-            $origen = in_array($origen, ['archivo', 'nota'], true) ? $origen : null;
+            $origen = in_array($origen, ['archivo', 'nota', 'gestion'], true) ? $origen : null;
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_archivos_clientes_listar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR) as result',
-                [$clienteId, $incluirInactivos, $origen]
+                'SELECT ventas.fn_archivos_clientes_listar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT) as result',
+                [$clienteId ?: null, $incluirInactivos, $origen, $gestionId ?: null]
             );
             $r = json_decode($result->result, true);
             return $this->successResponse($r['data'], $r['message']);
@@ -220,7 +223,8 @@ class ArchivoClienteController extends Controller
                 $reglas['extension']  = 'nullable|string|max:20';
                 $reglas['mime']       = 'nullable|string|max:120';
                 $reglas['tamano']     = 'nullable|integer|min:0';
-                $reglas['origen']     = 'nullable|string|in:archivo,nota';
+                $reglas['origen']     = 'nullable|string|in:archivo,nota,gestion';
+                $reglas['gestion_id'] = 'nullable|integer';
             }
 
             $validator = Validator::make($this->datosDe($request), $reglas, [
@@ -235,7 +239,7 @@ class ArchivoClienteController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_archivos_clientes_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, '
-                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $id,
                     isset($d['cliente_id']) ? (int) $d['cliente_id'] : null,
@@ -249,6 +253,7 @@ class ArchivoClienteController extends Controller
                     isset($d['orden']) ? (int) $d['orden'] : null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
                     $d['origen'] ?? 'archivo',
+                    isset($d['gestion_id']) ? (int) $d['gestion_id'] : null,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
