@@ -142,7 +142,10 @@ class GestionController extends Controller
             // ser opcional porque lo rellena la función con el nombre del asunto.
             'asunto_id'         => 'required|integer|exists:pgsql.ventas.gestiones_asuntos,id',
             'asunto'            => 'nullable|string|min:3|max:200',
-            'nota'              => 'nullable|string|max:4000',
+            // 100000 y no 4000: en «Qué se habló» cabe ahora un correo con
+            // formato y una conversación de WhatsApp importada, y los dos pasan
+            // de 4000 sin esfuerzo. La columna es text: el tope era sólo de aquí.
+            'nota'              => 'nullable|string|max:100000',
             'usuario_id'        => 'nullable|integer|exists:pgsql.seguridad.users,id',
             'contacto_id'       => 'nullable|integer',
             'telefono'          => 'nullable|string|max:20',
@@ -491,7 +494,7 @@ class GestionController extends Controller
             $datos = $this->datosDe($request);
             $validator = Validator::make($datos, [
                 'resultado'           => 'required|string|in:CONTACTADO,NO_CONTESTA,BUZON,NUMERO_ERRADO,VOLVER_A_LLAMAR,INTERESADO,NO_INTERESADO,COTIZACION,VENTA,RECLAMO,OTRO',
-                'nota'                => 'nullable|string|max:4000',
+                'nota'                => 'nullable|string|max:100000',
                 'duracion_minutos'    => 'nullable|integer|min:0|max:1440',
                 'fecha_realizada'     => 'nullable|date',
                 'siguiente'           => 'nullable|array',
