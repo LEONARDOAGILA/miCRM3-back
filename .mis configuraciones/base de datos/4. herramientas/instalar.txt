@@ -1,0 +1,9 @@
+powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\desarrollo\miCrm3\herramientas\instalar-marcador.ps1
+
+powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\desarrollo\miCrm3\herramientas\instalar-whatsapp.ps1
+
+
+powershell -ExecutionPolicy Bypass -File herramientas\instalar-copiador.ps1 ` -Api "http://192.168.1.141:8009/" -Enviar -EsperaChat 2500 -EsperaFoco 800 -EsperaEnvio 1400
+
+powershell -ExecutionPolicy Bypass -File herramientas\instalar-copiador.ps1 ` -Api "http://192.168.1.141:8009/" -Enviar -EsperaChat 1000 -EsperaFoco 500 -EsperaEnvio 600
+
