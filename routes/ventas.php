@@ -84,17 +84,9 @@ Route::group([
     Route::delete('deleteAsunto/{id}', [CatalogoGestionController::class, 'deleteAsunto']);  // si está en uso, desactiva
 });
 
-// PLANTILLAS DE WHATSAPP
-// Los mensajes que se ofrecen al escribirle a un cliente. Estaban escritos en
-// el código del front; ahora se mantienen desde la pantalla.
-Route::group([
-    'prefix' => 'whatsappPlantilla', 'middleware' => ['jwt.auth', 'usuario.activo']
-], function () {
-    Route::get('allPlantillas', [WhatsappPlantillaController::class, 'allPlantillas']);          // ?inactivos=0 para el menú
-    Route::post('addPlantilla', [WhatsappPlantillaController::class, 'savePlantilla']);
-    Route::post('editPlantilla/{id}', [WhatsappPlantillaController::class, 'savePlantilla']);
-    Route::delete('deletePlantilla/{id}', [WhatsappPlantillaController::class, 'deletePlantilla']);
-});
+// Los mensajes que se ofrecen al escribirle a un cliente tuvieron aquí su
+// propio grupo de rutas y su propia tabla. Ya no: son el campo `mensaje` de
+// un asunto del catálogo, y se mantienen con saveAsunto, ahí arriba.
 
 // ARCHIVOS DEL CLIENTE (fotos del local, contratos, videos de la visita)
 // Los ficheros van a storage/app/public/img/clientes, junto a la foto y el

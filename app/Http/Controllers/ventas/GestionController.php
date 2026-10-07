@@ -556,8 +556,14 @@ class GestionController extends Controller
             // Y se borran después, con la fila ya ida: al revés, si el borrado
             // fallara, la gestión seguiría enseñando adjuntos que ya no están.
             foreach ($adjuntos as $a) {
-                $ruta = storage_path('app/public/img/clientes/' . $a->archivo);
-                if ($a->archivo && file_exists($ruta)) { @unlink($ruta); }
+                if (!$a->archivo) { continue; }
+                // En las dos carpetas: los de ahora van a img/clientes/gestiones,
+                // y los subidos antes de que esa carpeta existiera siguen en la
+                // del cliente (ver ArchivoClienteController::rutaDeFichero).
+                foreach (['img/clientes/gestiones/', 'img/clientes/'] as $carpeta) {
+                    $ruta = storage_path('app/public/' . $carpeta . $a->archivo);
+                    if (file_exists($ruta)) { @unlink($ruta); break; }
+                }
             }
             $resultado = json_decode($result->result, true);
             sistemaLog('info', 'Gestión eliminada', ['gestion_id' => $id]);

@@ -22,6 +22,15 @@ use Illuminate\Support\Str;
  * del fichero: así cambiar de dominio o de servidor no obliga a reescribir
  * ninguna fila.
  *
+ * Los adjuntos de una GESTIÓN van aparte, a img/clientes/gestiones. No es
+ * manía de ordenar: la carpeta del cliente es la que se mira cuando alguien
+ * pregunta «qué documentos tenemos de este cliente», y mezclar ahí todo lo que
+ * se mandó por WhatsApp en un año la vuelve inservible. Son dos cosas
+ * distintas y se guardan en dos sitios distintos.
+ *
+ * Los que se subieron antes de ese cambio siguen en la carpeta de siempre, así
+ * que para leer y para borrar se busca en las dos (ver rutaDeFichero).
+ *
  *   GET    ventas/archivoCliente/allArchivos?cliente_id=  los del cliente
  *   POST   ventas/archivoCliente/subirArchivo             { cliente_id, archivo }  sólo sube
  *   POST   ventas/archivoCliente/addArchivo               crea el registro
@@ -40,6 +49,34 @@ class ArchivoClienteController extends Controller
 
     /** La misma carpeta donde ClienteController guarda la foto y el mapa. */
     private const CARPETA = 'img/clientes';
+
+    /** Lo adjuntado a una gestión, aparte de los documentos del cliente. */
+    private const CARPETA_GESTIONES = 'img/clientes/gestiones';
+
+    /** Qué carpeta le toca a un fichero según de dónde venga. */
+    private static function carpetaDe(?string $origen): string
+    {
+        return $origen === 'gestion' ? self::CARPETA_GESTIONES : self::CARPETA;
+    }
+
+    /**
+     * Dónde está de verdad un fichero.
+     *
+     * Primero donde le toca por su origen y, si no está, en la otra carpeta:
+     * los adjuntos de gestión subidos antes de que existiera img/clientes/
+     * gestiones siguen en la carpeta del cliente, y tienen que poder abrirse y
+     * borrarse igual. Devuelve null si no está en ninguna.
+     */
+    private static function rutaDeFichero(?string $archivo, ?string $origen): ?string
+    {
+        if (!$archivo) { return null; }
+
+        foreach ([self::carpetaDe($origen), self::CARPETA, self::CARPETA_GESTIONES] as $carpeta) {
+            $ruta = storage_path('app/public/' . $carpeta . '/' . $archivo);
+            if (file_exists($ruta)) { return $ruta; }
+        }
+        return null;
+    }
 
     /** SQLSTATE de las funciones → código HTTP. */
     private const ERRORES_NEGOCIO = [
@@ -137,6 +174,10 @@ class ArchivoClienteController extends Controller
      * El tipo se deduce de la EXTENSIÓN, no del contenido, reutilizando la
      * tabla del administrador de archivos: un .xlsx es un ZIP por dentro y la
      * regla `mimes:` de Laravel lo clasificaría mal.
+     *
+     * Con origen=gestion el fichero va a img/clientes/gestiones. El origen se
+     * manda al SUBIR y no sólo al crear el registro porque para entonces el
+     * fichero ya está escrito: decidirlo después obligaría a moverlo.
      */
     public function subirArchivo(Request $request)
     {
@@ -156,6 +197,9 @@ class ArchivoClienteController extends Controller
                 return $this->errorResponse('El cliente no existe o está en la papelera', 404);
             }
 
+            $origen  = $request->input('origen') === 'gestion' ? 'gestion' : null;
+            $carpeta = self::carpetaDe($origen);
+
             $fichero   = $request->file('archivo');
             $extension = strtolower($fichero->getClientOriginalExtension());
             if ($extension === '') {
@@ -165,10 +209,12 @@ class ArchivoClienteController extends Controller
             $base   = Str::slug(pathinfo($fichero->getClientOriginalName(), PATHINFO_FILENAME)) ?: 'archivo';
             $nombre = $clienteId . '_' . substr($base, 0, 50) . '-' . date('Ymd-His') . '-' . Str::lower(Str::random(6)) . '.' . $extension;
 
-            if (!$fichero->storeAs('public/' . self::CARPETA, $nombre)) {
+            // storeAs crea la carpeta si no existe, así que la primera gestión con
+            // adjunto es la que estrena img/clientes/gestiones
+            if (!$fichero->storeAs('public/' . $carpeta, $nombre)) {
                 return $this->errorResponse('No se pudo guardar el archivo en el servidor', 500);
             }
-            $ruta = storage_path('app/public/' . self::CARPETA . '/' . $nombre);
+            $ruta = storage_path('app/public/' . $carpeta . '/' . $nombre);
             if (!file_exists($ruta) || filesize($ruta) === 0) {
                 // Un fichero de 0 bytes es que la subida se cortó o venía vacío. Se
                 // quita antes de rendirse: si no, la carpeta se va llenando de
@@ -286,10 +332,8 @@ class ArchivoClienteController extends Controller
             $r = json_decode($result->result, true);
 
             $archivo = $r['data']['archivo'] ?? null;
-            if ($archivo) {
-                $ruta = 'public/' . self::CARPETA . '/' . $archivo;
-                if (Storage::exists($ruta)) { Storage::delete($ruta); }
-            }
+            $ruta    = self::rutaDeFichero($archivo, $r['data']['origen'] ?? null);
+            if ($ruta) { @unlink($ruta); }
 
             sistemaLog('info', 'Archivo de cliente eliminado', ['archivo_id' => $id, 'archivo' => $archivo]);
             return $this->successResponse($r['data'], $r['message']);
@@ -320,15 +364,15 @@ class ArchivoClienteController extends Controller
     {
         try {
             $fila = DB::selectOne(
-                'SELECT nombre, archivo, mime, extension FROM ventas.archivos_clientes WHERE id = ?',
+                'SELECT nombre, archivo, mime, extension, origen FROM ventas.archivos_clientes WHERE id = ?',
                 [(int) $id]
             );
             if (!$fila) {
                 return $this->errorResponse('El archivo no existe', 404);
             }
 
-            $ruta = storage_path('app/public/' . self::CARPETA . '/' . $fila->archivo);
-            if (!file_exists($ruta)) {
+            $ruta = self::rutaDeFichero($fila->archivo, $fila->origen);
+            if (!$ruta) {
                 return $this->errorResponse('El archivo ya no está en el servidor', 404);
             }
 

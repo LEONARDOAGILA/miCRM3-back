@@ -444,7 +444,7 @@ class NotaClienteController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_archivos_clientes_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, '
-                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     null,
                     $clienteId,
@@ -458,6 +458,8 @@ class NotaClienteController extends Controller
                     null,
                     true,
                     'nota',
+                    // Sin gestion: una imagen de nota no cuelga de ninguna
+                    null,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -547,7 +549,7 @@ class NotaClienteController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_archivos_clientes_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, '
-                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     null,
                     $clienteId,
@@ -561,6 +563,8 @@ class NotaClienteController extends Controller
                     null,
                     true,
                     'nota',
+                    // Sin gestion: una imagen de nota no cuelga de ninguna
+                    null,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
