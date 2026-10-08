@@ -52,8 +52,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$origen = Join-Path $PSScriptRoot 'copiar-archivos.ps1'
-if (-not (Test-Path -LiteralPath $origen)) { throw "No encuentro copiar-archivos.ps1 junto a este instalador ($PSScriptRoot)" }
+# Los dos: copiar-archivos.ps1 atiende el protocolo y, cuando el enlace pide
+# capturas, llama a capturar-whatsapp.ps1 con $PSScriptRoot, o sea buscandolo en
+# la carpeta del usuario. Si no se copia tambien, esa rama no encuentra nada.
+$origen  = Join-Path $PSScriptRoot 'copiar-archivos.ps1'
+$origen2 = Join-Path $PSScriptRoot 'capturar-whatsapp.ps1'
+if (-not (Test-Path -LiteralPath $origen))  { throw "No encuentro copiar-archivos.ps1 junto a este instalador ($PSScriptRoot)" }
+if (-not (Test-Path -LiteralPath $origen2)) { throw "No encuentro capturar-whatsapp.ps1 junto a este instalador ($PSScriptRoot)" }
 
 if ($Api -notmatch '^https?://') { throw "La direccion del API tiene que empezar por http:// o https:// (recibi: $Api)" }
 if ($Api -notmatch '/$') { $Api = $Api + '/' }
@@ -74,9 +79,12 @@ try {
 
 # --- 2. Copiar el script ------------------------------------------------------
 $null = New-Item -ItemType Directory -Path $Carpeta -Force
-$destino = Join-Path $Carpeta 'copiar-archivos.ps1'
-Copy-Item -LiteralPath $origen -Destination $destino -Force
+$destino  = Join-Path $Carpeta 'copiar-archivos.ps1'
+$destino2 = Join-Path $Carpeta 'capturar-whatsapp.ps1'
+Copy-Item -LiteralPath $origen  -Destination $destino  -Force
+Copy-Item -LiteralPath $origen2 -Destination $destino2 -Force
 Write-Host "  Script      : $destino"
+Write-Host "  Capturas    : $destino2"
 
 # --- 3. Registrar el protocolo ------------------------------------------------
 # Se guarda lo que hubiera antes, por si el puesto ya tenia algo con ese nombre.

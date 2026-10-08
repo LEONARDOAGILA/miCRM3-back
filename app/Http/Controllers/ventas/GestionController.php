@@ -154,7 +154,7 @@ class GestionController extends Controller
             'duracion_minutos'  => 'nullable|integer|min:0|max:1440',
             'resultado'         => 'nullable|string|in:CONTACTADO,NO_CONTESTA,BUZON,NUMERO_ERRADO,VOLVER_A_LLAMAR,INTERESADO,NO_INTERESADO,COTIZACION,VENTA,RECLAMO,OTRO',
             // Cómo la registró el vendedor; queda guardado para los reportes
-            'modo_registro'     => 'nullable|string|in:AHORA,YA_HECHA,PROGRAMADA',
+            'modo_registro'     => 'nullable|string|in:AHORA,YA_HECHA,PROGRAMADA,IMPORTADA',
         ];
     }
 
@@ -367,6 +367,29 @@ class GestionController extends Controller
                 : $this->errorResponse($resultado['message'], 500);
         } catch (Exception $e) {
             sistemaLog('error', 'Error en resumen de gestiones', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Las conversaciones que se trajeron de un fichero.
+     *
+     * Son gestiones normales con modo_registro = IMPORTADA. Van por su propia
+     * ruta y no por allGestiones con un filtro más porque la pestaña de
+     * WhatsApp las enseña TODAS y sin paginar: son unas pocas por cliente, y
+     * buscarlas dentro del historial paginado obligaría a pedir páginas hasta
+     * dar con ellas.
+     */
+    public function importadas($clienteId)
+    {
+        try {
+            $result = DB::selectOne('SELECT ventas.fn_gestiones_importadas(?::BIGINT) as result', [(int) $clienteId]);
+            $resultado = json_decode($result->result, true);
+            return $resultado['success']
+                ? $this->successResponse($resultado['data'], $resultado['message'])
+                : $this->errorResponse($resultado['message'], 500);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en importadas', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
             return $this->errorResponse($e->getMessage(), 500);
         }
     }

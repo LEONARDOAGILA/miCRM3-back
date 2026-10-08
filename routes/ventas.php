@@ -50,6 +50,7 @@ Route::group([
     Route::get('allGestiones', [GestionController::class, 'allGestiones']);                 // ?cliente_id&page&per_page&search&tipo&estado&desde&hasta
     Route::get('findByIdGestion/{id}', [GestionController::class, 'findByIdGestion']);
     Route::get('resumen/{clienteId}', [GestionController::class, 'resumen']);               // contadores + última y próxima
+    Route::get('importadas/{clienteId}', [GestionController::class, 'importadas']);         // conversaciones traídas de un fichero
     Route::get('estadisticas', [GestionController::class, 'estadisticas']);   // tablero: ?dias=14
     Route::get('agenda', [GestionController::class, 'agenda']);
     Route::get('agendaPaginada', [GestionController::class, 'agendaPaginada']);  // la grilla: + ?page&per_page&search                             // ?empleado_id&desde&hasta&limite

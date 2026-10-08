@@ -72,6 +72,18 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------------------
+# Las capturas van por su propio script.
+#
+# Aqui solo se desvia: lo de capturar una conversacion no comparte nada con
+# bajar adjuntos y pegarlos, y meterlo en este fichero era arriesgar lo que ya
+# funciona por una funcion que no se le parece.
+# ---------------------------------------------------------------------------
+if ($Url -match '^\s*micrm3:/*capturas') {
+    & (Join-Path $PSScriptRoot 'capturar-whatsapp.ps1') -Url $Url -Api $Api
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
 # Traer una ventana al frente en Windows no es una sola llamada: el sistema
 # protege al que está delante para que nadie le robe el foco. El truco que sí
 # funciona es engancharse al hilo de la ventana con foco (AttachThreadInput).

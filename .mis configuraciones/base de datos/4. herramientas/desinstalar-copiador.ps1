@@ -33,6 +33,9 @@ if (Test-Path -LiteralPath $copia) {
 }
 
 $script = Join-Path $Carpeta 'copiar-archivos.ps1'
+# El de las capturas se instala con el otro, asi que se va con el otro
+$capturas = Join-Path $Carpeta 'capturar-whatsapp.ps1'
+if (Test-Path -LiteralPath $capturas) { Remove-Item -LiteralPath $capturas -Force }
 if (Test-Path -LiteralPath $script) {
     Remove-Item -LiteralPath $script -Force
     Write-Host "  Borrado $script"

@@ -1,9 +1,33 @@
-powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\desarrollo\miCrm3\herramientas\instalar-marcador.ps1
+INSTALAR LOS AYUDANTES DE CADA PC
 
-powershell -ExecutionPolicy Bypass -File C:\xampp\htdocs\desarrollo\miCrm3\herramientas\instalar-whatsapp.ps1
+Se corren UNA VEZ en cada equipo, con el usuario que va a usar el CRM (se
+registran en HKCU, no en la máquina: por eso no hace falta administrador).
+
+La carpeta es ésta:
+  C:\xampp\htdocs\desarrollo\miCRM3\miCRM3-back\.mis configuraciones\base de datos\4. herramientas
 
 
-powershell -ExecutionPolicy Bypass -File herramientas\instalar-copiador.ps1 ` -Api "http://192.168.1.141:8009/" -Enviar -EsperaChat 2500 -EsperaFoco 800 -EsperaEnvio 1400
+1) MARCADOR (el botón de llamar abre Zoiper con el número puesto)
 
-powershell -ExecutionPolicy Bypass -File herramientas\instalar-copiador.ps1 ` -Api "http://192.168.1.141:8009/" -Enviar -EsperaChat 1000 -EsperaFoco 500 -EsperaEnvio 600
+   powershell -ExecutionPolicy Bypass -File "C:\xampp\htdocs\desarrollo\miCRM3\miCRM3-back\.mis configuraciones\base de datos\4. herramientas\instalar-marcador.ps1"
 
+
+2) COPIADOR (copia los adjuntos y los pega en WhatsApp; también abre el
+   correo en Outlook). El -Api se graba en el registro: si cambia la IP del
+   servidor, hay que volver a instalarlo.
+
+   powershell -ExecutionPolicy Bypass -File "C:\xampp\htdocs\desarrollo\miCRM3\miCRM3-back\.mis configuraciones\base de datos\4. herramientas\instalar-copiador.ps1" -Api "http://192.168.2.173:8009/" -Enviar -EsperaChat 2500 -EsperaFoco 800 -EsperaEnvio 1400
+
+   En equipos rápidos se pueden bajar las esperas:
+
+   powershell -ExecutionPolicy Bypass -File "C:\xampp\htdocs\desarrollo\miCRM3\miCRM3-back\.mis configuraciones\base de datos\4. herramientas\instalar-copiador.ps1" -Api "http://192.168.2.173:8009/" -Enviar -EsperaChat 1000 -EsperaFoco 500 -EsperaEnvio 600
+
+
+PARA QUITARLOS
+
+   powershell -ExecutionPolicy Bypass -File "C:\xampp\htdocs\desarrollo\miCRM3\miCRM3-back\.mis configuraciones\base de datos\4. herramientas\desinstalar-marcador.ps1"
+   powershell -ExecutionPolicy Bypass -File "C:\xampp\htdocs\desarrollo\miCRM3\miCRM3-back\.mis configuraciones\base de datos\4. herramientas\desinstalar-copiador.ps1"
+
+
+
+powershell -ExecutionPolicy Bypass -File "…\4. herramientas\instalar-copiador.ps1" -Api "http://192.168.2.173:8009/"
