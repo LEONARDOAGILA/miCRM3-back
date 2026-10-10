@@ -21,7 +21,7 @@ use App\Http\Resources\ApiResponder;
  * se valida la entrada, se llama a la función con el contexto del usuario
  * autenticado y se traduce la respuesta.
  *
- *   GET    ventas/gestion/allGestiones?cliente_id&page&per_page&search&tipo&estado&desde&hasta
+ *   GET    ventas/gestion/allGestiones?cliente_id&page&per_page&search&tipo&estado&desde&hasta&resultado&responsable_id&filtros
  *   GET    ventas/gestion/findByIdGestion/{id}
  *   POST   ventas/gestion/addGestion
  *   POST   ventas/gestion/editGestion/{id}
@@ -124,7 +124,7 @@ class GestionController extends Controller
      * un agujero —escapar o no aceptar nombres libres— ésta es la que no
      * depende de acordarse de escapar.
      */
-    private const COLUMNAS_FILTRABLES = [
+    private const COLUMNAS_FILTRABLES_REPARTO = [
         'id'                    => 'numero',
         'pendientes'            => 'numero',
         'nombre_completo'       => 'texto',
@@ -138,6 +138,60 @@ class GestionController extends Controller
         'cobrador_nombre'       => 'texto',
         'asistente_nombre'      => 'texto',
         'postventa_nombre'      => 'texto',
+    ];
+
+    /**
+     * Por qué columnas dejan filtrar las rejillas de la ficha del cliente
+     * —«Historial» y «Pendientes»—, y de qué tipo.
+     *
+     * Las dos pestañas salen de allGestiones, así que la lista es la unión de
+     * sus dos rejillas: lo que sólo está en una (prioridad, telefono) no lo
+     * pide la otra y aquí no estorba.
+     *
+     * Tiene que cuadrar con lo que escribe ventas.fn_gestiones_listar_paginado:
+     * ofrecer aquí una columna que la función no mira sería prometer un filtro
+     * que no hace nada.
+     *
+     * `cuando` no es un campo del dato: es la columna que enseña la fecha
+     * realizada y, si no la hay, la programada. La rejilla la manda con ese
+     * nombre porque se le puso ese colId.
+     */
+    private const COLUMNAS_FILTRABLES_GESTIONES = [
+        'id'                    => 'numero',
+        'duracion_minutos'      => 'numero',
+        'responsable_nombre'    => 'texto',
+        'estado'                => 'texto',
+        'tipo'                  => 'texto',
+        'cuando'                => 'texto',
+        'fecha_programada'      => 'texto',
+        'asunto'                => 'texto',
+        'resultado'             => 'texto',
+        'prioridad'             => 'texto',
+        'telefono'              => 'texto',
+        'contacto_nombre'       => 'texto',
+        'nota'                  => 'texto',
+        'registrado_por_nombre' => 'texto',
+    ];
+
+    /**
+     * Por qué columnas deja filtrar «Lo que toca hacer», y de qué tipo.
+     *
+     * Es otra rejilla y otra consulta que la de la ficha del cliente: aquí
+     * salen las pendientes de TODOS los clientes, así que tiene columna de
+     * cliente y no tiene ni estado ni resultado (son todas PENDIENTE).
+     *
+     * Tiene que cuadrar con ventas.fn_gestiones_agenda_paginado, que es quien
+     * lo aplica.
+     */
+    private const COLUMNAS_FILTRABLES_AGENDA = [
+        'id'                 => 'numero',
+        'tipo'               => 'texto',
+        'fecha_programada'   => 'texto',
+        'cliente_nombre'     => 'texto',
+        'asunto'             => 'texto',
+        'prioridad'          => 'texto',
+        'telefono'           => 'texto',
+        'responsable_nombre' => 'texto',
     ];
 
     /** Los mismos marcadores de auditoría que usan las demás funciones. */
@@ -291,9 +345,15 @@ class GestionController extends Controller
             // función falla cerrado y sin usuario no devuelve ninguna.
             $quien = auth('api')->id();
 
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no en
+            // el navegador: las dos pestañas piden sus filas al servidor, así
+            // que ag-Grid sólo tiene las de la página y filtrando por su cuenta
+            // buscaría dentro de ésas.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_GESTIONES);
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::BIGINT, ?::BIGINT) as result',
-                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $responsableId, $quien]
+                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::BIGINT, ?::BIGINT, ?::JSONB) as result',
+                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $responsableId, $quien, json_encode((object) $filtros)]
             );
             $resultado = json_decode($result->result, true);
 
@@ -376,9 +436,15 @@ class GestionController extends Controller
             // jerarquía.
             [$solicitante] = $this->contextoUsuario();
 
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no en
+            // el navegador: la agenda pagina en el servidor, así que ag-Grid
+            // sólo tiene quince filas y filtrando por su cuenta buscaría
+            // dentro de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_AGENDA);
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER, ?::BIGINT) as result',
-                [$usuarioId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage, $solicitante]
+                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER, ?::BIGINT, ?::JSONB) as result',
+                [$usuarioId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage, $solicitante, json_encode((object) $filtros)]
             );
             $resultado = json_decode($result->result, true);
 
@@ -958,7 +1024,7 @@ class GestionController extends Controller
                     (int) $request->input('page', 1),
                     (int) $request->input('per_page', 20),
                     (string) $request->input('search', ''),
-                    json_encode((object) $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES)),
+                    json_encode((object) $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_REPARTO)),
                     auth('api')->id(),
                 ]
             );
