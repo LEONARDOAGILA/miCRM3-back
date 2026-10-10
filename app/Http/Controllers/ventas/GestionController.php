@@ -41,6 +41,9 @@ class GestionController extends Controller
         'P0001' => 422,   // falta un dato obligatorio
         'P0013' => 404,   // el cliente o la gestión no existe
         'P0016' => 422,   // el usuario no existe
+        'P0017' => 422,   // el papel (vendedor, cobrador…) no existe
+        'P0018' => 422,   // no se eligió ningún cliente
+        'P0019' => 422,   // se pasó del tope de clientes por tanda
         'P0021' => 409,   // la gestión ya no está pendiente
         'P0022' => 422,   // la fecha no es coherente
     ];
@@ -95,6 +98,91 @@ class GestionController extends Controller
             [(int) $id]
         );
         return (bool) ($fila->admin ?? false);
+    }
+
+    /** Los papeles con los que se atiende a un cliente. */
+    private const ROLES_RESPONSABLE = ['VENDEDOR', 'COBRADOR', 'ASISTENTE', 'POSTVENTA'];
+
+    /**
+     * Por qué columnas deja filtrar la pantalla de reparto, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'                    => 'numero',
+        'pendientes'            => 'numero',
+        'nombre_completo'       => 'texto',
+        'numero_identificacion' => 'texto',
+        'provincia'             => 'texto',
+        'canton'                => 'texto',
+        'parroquia'             => 'texto',
+        'coordenadas'           => 'texto',
+        'estado'                => 'texto',
+        'vendedor_nombre'       => 'texto',
+        'cobrador_nombre'       => 'texto',
+        'asistente_nombre'      => 'texto',
+        'postventa_nombre'      => 'texto',
+    ];
+
+    /** Las operaciones de ag-Grid que la base sabe aplicar. */
+    private const OPERACIONES = [
+        'texto'  => ['contains', 'notContains', 'equals', 'notEqual', 'startsWith', 'endsWith', 'blank', 'notBlank'],
+        'numero' => ['equals', 'notEqual', 'lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'inRange', 'blank', 'notBlank'],
+    ];
+
+    /**
+     * Traduce el modelo de filtros de ag-Grid a lo que entiende la función.
+     *
+     * Llega tal cual lo da la rejilla —{"canton":{"filterType":"text",
+     * "type":"contains","filter":"manta"}}— y sale normalizado a
+     * {"canton":{"op":"contains","valor":"manta"}}.
+     *
+     * Se tira en silencio todo lo que no cuadre: una columna que no está en
+     * la lista blanca, una operación que la base no sabe aplicar, o un filtro
+     * sin valor cuando la operación lo necesita. Un filtro que no se entiende
+     * no es un error del que usa la pantalla; devolverle un 422 por algo que
+     * no ha escrito él sería peor que no filtrar por eso.
+     */
+    private function filtrosDeColumna(?string $crudo): array
+    {
+        if (!$crudo) { return []; }
+
+        $modelo = json_decode($crudo, true);
+        if (!is_array($modelo)) { return []; }
+
+        $limpio = [];
+        foreach ($modelo as $columna => $f) {
+            $tipo = self::COLUMNAS_FILTRABLES[$columna] ?? null;
+            if ($tipo === null || !is_array($f)) { continue; }
+
+            // ag-Grid permite juntar dos condiciones con Y/O. La pantalla lo
+            // tiene desactivado, pero si llegara se coge la primera en vez de
+            // filtrar por algo que no se pidió.
+            if (isset($f['condition1'])) { $f = $f['condition1']; }
+
+            $op = (string) ($f['type'] ?? 'contains');
+            if (!in_array($op, self::OPERACIONES[$tipo], true)) { continue; }
+
+            $vacio = in_array($op, ['blank', 'notBlank'], true);
+            $valor = $f['filter'] ?? null;
+            if (!$vacio && ($valor === null || $valor === '')) { continue; }
+
+            $limpio[$columna] = ['op' => $op];
+            if (!$vacio) {
+                $limpio[$columna]['valor'] = $tipo === 'numero' ? (string) (0 + $valor) : (string) $valor;
+            }
+            if ($op === 'inRange') {
+                $hasta = $f['filterTo'] ?? null;
+                if ($hasta === null || $hasta === '') { unset($limpio[$columna]); continue; }
+                $limpio[$columna]['valor2'] = (string) (0 + $hasta);
+            }
+        }
+
+        return $limpio;
     }
 
     /** Los mismos marcadores de auditoría que usan las demás funciones. */
@@ -861,6 +949,143 @@ class GestionController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en asignaciones', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
             return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // REPARTIR CLIENTES EN BLOQUE
+    // ================================================================
+
+    /**
+     * Los clientes a repartir, con quién los tiene hoy en el papel elegido.
+     *
+     * Filtra por dos sitios: `search`, el buscador de arriba, que mira además
+     * en correo, teléfono, dirección y razón social —campos que no están en
+     * la rejilla—; y `filtros`, el modelo de filtros de columna de ag-Grid tal
+     * cual lo da la rejilla, en JSON.
+     *
+     * LOS FILTROS DE LA CABECERA SE APLICAN AQUÍ, no en el navegador. La
+     * pantalla pagina en el servidor, así que ag-Grid sólo tiene veinte filas
+     * y filtrando por su cuenta buscaría dentro de veinte: la rejilla manda lo
+     * que el usuario pidió y el servidor lo aplica sobre los mil.
+     *
+     * Devuelve en `meta.ids` TODOS los que cumplen el filtro, no sólo los de
+     * la página: sin eso, repartir los 991 sueltos obligaría a pasar por
+     * cincuenta páginas marcando casillas.
+     */
+    public function clientesParaAsignar(Request $request)
+    {
+        try {
+            if (!$this->esAdministrador()) {
+                return $this->errorResponse('Sólo un administrador puede repartir clientes', 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'page'     => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:200',
+                'search'   => 'nullable|string|max:200',
+                'filtros'  => 'nullable|string|max:4000',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_asignacion_listar(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB, ?::BIGINT) as result',
+                [
+                    (int) $request->input('page', 1),
+                    (int) $request->input('per_page', 20),
+                    (string) $request->input('search', ''),
+                    json_encode((object) $this->filtrosDeColumna($request->input('filtros'))),
+                    auth('api')->id(),
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            return ($r['success'] ?? false)
+                ? $this->successResponse($r['data'], $r['message'])
+                : $this->errorResponse($r['message'] ?? 'No se pudo listar los clientes', 400);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en clientesParaAsignar', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar los clientes', 500);
+        }
+    }
+
+    /**
+     * Reparte varios clientes de una vez.
+     *
+     * `destinos` es una lista de usuarios: con uno, todos van a esa persona;
+     * con varios, se reparten por turnos; vacía, se les quita el responsable.
+     *
+     * El resultado NO es un sí o un no: vuelve con cuántos se asignaron,
+     * cuántos ya lo tenían y cuáles fallaron y por qué. Un cliente que falle
+     * no tumba la tanda —eso lo resuelve la función, cada uno en su propio
+     * bloque—, así que la respuesta puede ser 200 y traer fallos dentro.
+     */
+    public function reasignarMasivo(Request $request)
+    {
+        try {
+            if (!$this->esAdministrador()) {
+                sistemaLog('warning', 'Reparto masivo rechazado: no es administrador', [
+                    'usuario' => $request->user()->login_user ?? null,
+                ]);
+                return $this->errorResponse('Sólo un administrador puede repartir clientes', 403);
+            }
+
+            $validator = Validator::make($this->datosDe($request), [
+                'ids'          => 'required|array|min:1|max:2000',
+                'ids.*'        => 'integer',
+                'destinos'     => 'present|array|max:50',
+                'destinos.*'   => 'integer|exists:pgsql.seguridad.users,id',
+                'rol'          => 'nullable|string|in:VENDEDOR,COBRADOR,ASISTENTE,POSTVENTA',
+                'motivo'       => 'nullable|string|max:1000',
+                'mover_agenda' => 'nullable|boolean',
+            ], [
+                'ids.required'      => 'Elija al menos un cliente',
+                'ids.max'           => 'Son demasiados clientes para una sola tanda (máximo 2000)',
+                'destinos.present'  => 'Indique a quién se reparten, o una lista vacía para quitarles el responsable',
+                'destinos.*.exists' => 'Alguno de los usuarios elegidos ya no existe',
+                'rol.in'            => 'El papel indicado no existe',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+            $d = $validator->validated();
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_reasignar_masivo(?::JSONB, ?::JSONB, ?::VARCHAR, ?::TEXT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([
+                    json_encode(array_values(array_map('intval', $d['ids']))),
+                    json_encode(array_values(array_map('intval', $d['destinos'] ?? []))),
+                    strtoupper($d['rol'] ?? 'VENDEDOR'),
+                    $d['motivo'] ?? null,
+                    array_key_exists('mover_agenda', $d) ? (bool) $d['mover_agenda'] : true,
+                ], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', 'Reparto masivo de clientes', [
+                'rol'       => $r['data']['rol'] ?? null,
+                'pedidos'   => $r['data']['pedidos'] ?? null,
+                'asignados' => $r['data']['asignados'] ?? null,
+                'omitidos'  => $r['data']['omitidos'] ?? null,
+                'fallidos'  => $r['data']['fallidos'] ?? null,
+                'destinos'  => $d['destinos'] ?? [],
+                'usuario'   => $request->user()->login_user ?? null,
+            ]);
+
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'reasignarMasivo rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(),
+            ]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en reasignarMasivo', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al repartir los clientes', 500);
         }
     }
 }

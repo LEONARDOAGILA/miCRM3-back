@@ -62,6 +62,10 @@ Route::group([
     // Cartera
     Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda?, rol? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
+
+    // Repartir clientes en bloque (administradores)
+    Route::get('clientesParaAsignar', [GestionController::class, 'clientesParaAsignar']);  // ?rol=&responsable_id=&sin_responsable=&search=&page=
+    Route::post('reasignarMasivo', [GestionController::class, 'reasignarMasivo']);         // { ids[], destinos[], rol?, motivo?, mover_agenda? }
     Route::get('responsables/{clienteId}', [GestionController::class, 'responsables']);  // quién lo atiende ahora, por papel
     Route::get('asignables', [GestionController::class, 'asignables']);                              // ?cliente_id= : a quién puede dejar la gestión a cargo
 });
