@@ -7,6 +7,7 @@ use App\Http\Controllers\auth\ProfileController;
 use App\Http\Controllers\auth\MenuController;
 use App\Http\Controllers\auth\EmailController;
 use App\Http\Controllers\auth\UserController;
+use App\Http\Controllers\auth\TipoUsuarioController;
 use App\Http\Controllers\auth\GrupoController;
 use App\Http\Controllers\auth\HorarioController;
 use App\Http\Controllers\auth\AuditoriaController;
@@ -54,9 +55,16 @@ Route::group([
     Route::get('findByProgramProfile/{profile}/{program}', [ProfileController::class, 'findByProgramProfile']);
     Route::get('getAppMenus/{id}', [ProfileController::class, 'getAppMenus']);
 
+    // Qué ve este perfil dentro de un cliente: gestiones, notas, archivos,
+    // WhatsApp y la pestaña de Asignación
+    Route::get('visibilidadPerfil/{id}', [ProfileController::class, 'visibilidadPerfil']);
+    // Y los del que pregunta, para que la pantalla sepa qué pintar
+    Route::get('miVisibilidad', [ProfileController::class, 'miVisibilidad']);
+
 
     Route::post('addProfile', [ProfileController::class, 'addProfile']);
     Route::post('editProfile/{id}', [ProfileController::class, 'editProfile']);
+    Route::post('editVisibilidadPerfil/{id}', [ProfileController::class, 'editVisibilidadPerfil']);
     Route::delete('deleteProfile/{id}', [ProfileController::class, 'deleteProfile']);
     Route::post('clonProfile', [ProfileController::class, 'clonProfile']);
 });
@@ -99,7 +107,7 @@ Route::group([
 ], function () {
     Route::get('allUsers', [UserController::class, 'allUsers'])->middleware(['jwt.auth', 'usuario.activo']); 
     Route::get('findByIdUser/{id}', [UserController::class, 'findByIdUser'])->middleware(['jwt.auth', 'usuario.activo']);     
-    Route::get('listUsers', [UserController::class, 'listUsers'])->middleware(['jwt.auth', 'usuario.activo']); 
+    Route::get('listUsers', [UserController::class, 'listUsers'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addUser', [UserController::class, 'addUser'])->middleware(['jwt.auth', 'usuario.activo']); 
     Route::post('editUser/{id}', [UserController::class, 'editUser'])->middleware(['jwt.auth', 'usuario.activo']); 
     Route::delete('deleteUser/{id}', [UserController::class, 'deleteUser'])->middleware(['jwt.auth', 'usuario.activo']); 
@@ -144,6 +152,21 @@ Route::group([
     Route::post('/addHorario', [HorarioController::class, 'addHorario']);
     Route::post('/editHorario/{id}', [HorarioController::class, 'editHorario']);
     Route::delete('/deleteHorario/{id}', [HorarioController::class, 'deleteHorario']);
+});
+
+
+
+
+// TIPOS DE USUARIO (clase de usuario: sistema, web, freelance, temporal...)
+Route::group([
+    'prefix' => 'tipoUsuario', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('/allTiposUsuario', [TipoUsuarioController::class, 'allTiposUsuario']);
+    Route::get('/listTiposUsuario', [TipoUsuarioController::class, 'listTiposUsuario']);   // ?inactivos=1&vigentes=1
+    Route::get('/getTipoUsuario/{id}', [TipoUsuarioController::class, 'getTipoUsuario']);
+    Route::post('/addTipoUsuario', [TipoUsuarioController::class, 'addTipoUsuario']);
+    Route::post('/editTipoUsuario/{id}', [TipoUsuarioController::class, 'editTipoUsuario']);
+    Route::delete('/deleteTipoUsuario/{id}', [TipoUsuarioController::class, 'deleteTipoUsuario']);
 });
 
 

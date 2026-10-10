@@ -27,7 +27,37 @@ class VerificarUsuarioActivo
                 ], 401);
             }
 
-            // 3. Validar si el usuario tiene un horario asignado
+            // 3. Validar que su TIPO de usuario esté vigente
+            //
+            // El tipo (del sistema, web, freelance, temporal…) puede tener
+            // fecha de inicio y de fin; mientras no esté vigente, el usuario no
+            // entra. La regla y el texto del aviso viven en la base
+            // (seguridad.fn_tipo_usuario_vigente / fn_tipo_usuario_motivo), que
+            // es donde se pueden cambiar sin tocar código.
+            //
+            // Sin tipo (type_user NULL) no se bloquea a nadie: la vigencia es
+            // una restricción del tipo, y no tenerlo no es una razón para
+            // dejar a alguien fuera.
+            $vigencia = DB::selectOne(
+                'SELECT seguridad.fn_tipo_usuario_vigente(?::INTEGER) AS vigente,
+                        seguridad.fn_tipo_usuario_motivo(?::INTEGER)  AS motivo',
+                [$user->type_user, $user->type_user]
+            );
+
+            if ($vigencia && !$vigencia->vigente) {
+                sistemaLog('warning', 'Acceso denegado: tipo de usuario no vigente', [
+                    'user_id'    => $user->id,
+                    'login_user' => $user->login_user,
+                    'type_user'  => $user->type_user,
+                    'motivo'     => $vigencia->motivo,
+                    'ip'         => $request->ip()
+                ]);
+                return response()->json([
+                    'message' => $vigencia->motivo ?: 'Acceso denegado. Su tipo de usuario no está vigente.',
+                ], 401);
+            }
+
+            // 4. Validar si el usuario tiene un horario asignado
             if (!$user->chorario_id) {
                 sistemaLog('warning', 'Acceso denegado: Usuario sin horario asignado', [
                     'user_id' => $user->id ?? null,
@@ -39,7 +69,7 @@ class VerificarUsuarioActivo
                 ], 401);
             }
 
-            // 4. Obtener el horario completo con sus días (SQL directo)
+            // 5. Obtener el horario completo con sus días (SQL directo)
             $horario = DB::selectOne("
                 SELECT 
                     c.id,
@@ -61,11 +91,11 @@ class VerificarUsuarioActivo
                 ], 401);
             }
 
-            // 5. Obtener día actual (1 = lunes, 2 = martes, ..., 7 = domingo)
+            // 6. Obtener día actual (1 = lunes, 2 = martes, ..., 7 = domingo)
             $diaActual = now()->dayOfWeek;
             $diaActualSQL = $diaActual == 0 ? 7 : $diaActual;
 
-            // 6. Buscar si existe horario activo para el día actual
+            // 7. Buscar si existe horario activo para el día actual
             $diaHorario = DB::selectOne("
                 SELECT 
                     id,
@@ -89,7 +119,7 @@ class VerificarUsuarioActivo
                 ], 401);
             }
 
-            // 7. Validar si la hora actual está dentro del rango permitido
+            // 8. Validar si la hora actual está dentro del rango permitido
             $horaActual = now()->format('H:i:s');
 
             if ($horaActual < $diaHorario->hora_inicio || $horaActual > $diaHorario->hora_fin) {

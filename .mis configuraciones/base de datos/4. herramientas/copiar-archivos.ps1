@@ -179,6 +179,18 @@ if ($Url -match '[?&]texto=([^&]*)') {
 $via = 'app'
 if ($Url -match '[?&]via=web') { $via = 'web' }
 
+# La sesion de quien pulso el boton. Hace falta desde que
+# ventas/archivoCliente/ver/{id} dejo de ser publica: sin esto, bajar un
+# adjunto devuelve 401 y no se copia nada.
+#
+# Viaja en el enlace y no en el registro (como el -Api) porque cambia con cada
+# sesion. El enlace no sale de este equipo -lo atiende este mismo script-, pero
+# queda en la linea de comandos del proceso mientras dura.
+$token = ''
+if ($Url -match '[?&]token=([^&]*)') {
+    try { $token = [System.Uri]::UnescapeDataString($Matches[1]) } catch { $token = '' }
+}
+
 # ---------------------------------------------------------------------------
 # El correo: «micrm3://correo?para=…&asunto=…&cuerpo=…&ids=…»
 #
@@ -220,6 +232,7 @@ $null = New-Item -ItemType Directory -Path $Carpeta -Force
 $rutas = @()
 foreach ($id in $ids) {
     $enlace = "${Api}ventas/archivoCliente/ver/$id`?descargar=1"
+    if ($token) { $enlace = $enlace + '&t=' + [System.Uri]::EscapeDataString($token) }
     try {
         # El nombre bueno viene en la cabecera, no en la url: en el disco del
         # servidor el fichero se llama «56_cotizacion-20261006-ab12cd.pdf» y al

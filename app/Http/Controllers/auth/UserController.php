@@ -45,6 +45,36 @@ class UserController extends Controller
         'P0019' => 404,   // el usuario no está en la papelera
     ];
 
+    /**
+     * La regla de validación del tipo de usuario, sacada del catálogo.
+     *
+     * Antes era `in:1,2,3,4` escrito aquí. Ahora los tipos viven en
+     * seguridad.tipos_usuarios —del sistema, web, freelance, temporal y los
+     * que se añadan—, así que la lista se pregunta en vez de repetirla: un
+     * tipo nuevo no obliga a tocar este fichero.
+     *
+     * Sólo los ACTIVOS: un tipo retirado se sigue leyendo en los usuarios que
+     * lo tienen, pero no se puede poner en uno nuevo. La función de base
+     * valida lo mismo (es la que manda); esto es para dar el 422 con un
+     * mensaje claro antes de llegar allí.
+     */
+    private function reglaTipoUsuario(): string
+    {
+        $ids = DB::table('seguridad.tipos_usuarios')
+            ->where('activo', true)
+            ->orderBy('id')
+            ->pluck('id')
+            ->all();
+
+        // Sin catálogo no se inventa una lista: que no pase ningún valor y se
+        // vea el error, en vez de aceptar cualquier número en silencio
+        return 'in:' . ($ids ? implode(',', $ids) : '-1');
+    }
+
+    // El catálogo de tipos vive en TipoUsuarioController (auth/tipoUsuario/
+    // listTiposUsuario), con el resto de su CRUD. Aquí sólo queda la regla de
+    // validación de arriba, que es lo que necesita el alta de un usuario.
+
     public function __construct() {
         $this->middleware('auth:api', ['except' => [
             'getImagenUsuario',
@@ -158,8 +188,8 @@ class UserController extends Controller
                 'avatar' => 'nullable|string|max:255',
                 'isactive' => 'boolean',
                 // Sin esta regla, validated() descartaba type_user y la función
-                // de PostgreSQL lo escribía a fuego como 1 (SUPER USUARIO).
-                'type_user' => 'required|integer|in:1,2,3,4',
+                // de PostgreSQL lo escribía con su valor por omisión.
+                'type_user' => ['required', 'integer', $this->reglaTipoUsuario()],
                 'perfil_id' => 'nullable|integer',
                 'chorario_id' => 'required|integer',
                 'grupo_id' => 'nullable|integer'
@@ -281,7 +311,7 @@ class UserController extends Controller
                 'login_user' => 'required|string|max:100',
                 'avatar' => 'nullable|string|max:255',
                 'isactive' => 'required|boolean',
-                'type_user' => 'nullable|integer',
+                'type_user' => ['nullable', 'integer', $this->reglaTipoUsuario()],
                 'perfil_id' => 'nullable|integer',
                 'chorario_id' => 'nullable|integer',
                 'grupo_id' => 'nullable|integer'

@@ -785,6 +785,190 @@ public function clonProfile(Request $request)
 }
 
 
+// ================================================================
+// QUÉ VE ESTE PERFIL DENTRO DE UN CLIENTE
+// ================================================================
+
+/**
+ * Los cinco alcances del perfil: gestiones, notas, archivos, WhatsApp y la
+ * pestaña de Asignación.
+ *
+ * Responde siempre los cinco —con TODO donde nadie ha decidido nada—, así la
+ * pantalla no tiene que saber nada de filas que faltan.
+ */
+public function visibilidadPerfil($id)
+{
+    try {
+        $result = DB::selectOne(
+            'SELECT seguridad.fn_visibilidad_datos_obtener(?::BIGINT) as result',
+            [(int) $id]
+        );
+        $r = json_decode($result->result, true);
+
+        return ($r['success'] ?? false)
+            ? $this->successResponse($r['data'], $r['message'])
+            : $this->errorResponse($r['message'] ?? 'No se pudo leer la visibilidad', 400);
+
+    } catch (Exception $e) {
+        sistemaLog('error', 'Error en visibilidadPerfil', [
+            'message' => $e->getMessage(), 'line' => $e->getLine(), 'perfil_id' => $id,
+        ]);
+        return $this->errorResponse('Ocurrió un error al obtener la visibilidad', 500);
+    }
+}
+
+/**
+ * ¿Puede este usuario cambiar la configuración de los perfiles?
+ *
+ * Dos puertas: que su grupo sea administrador, o que su propio perfil tenga
+ * «editar» en la pantalla de Perfiles, que es el permiso con el que ya entra
+ * a configurarlos. Así sigue siendo dinámico y no hace falta tocar código
+ * para dar o quitar ese mando.
+ *
+ * SE MIRA EN EL SERVIDOR, y no basta con que la pantalla lo esconda: esto
+ * decide quién ve las gestiones de quién, y si la comprobación viviera sólo
+ * en Angular cualquier usuario con sesión podría aflojar su propio perfil con
+ * una petición a mano. Entonces todo lo anterior no serviría de nada.
+ */
+private function puedeAdministrarPerfiles(): bool
+{
+    $u = auth('api')->user();
+    if (!$u) { return false; }
+
+    // El programa sale del segundo tramo de la url del menú, igual que en
+    // findByProgramProfile. Se busca por url y no por id porque el id del
+    // menú no es el mismo en todas las bases.
+    $fila = DB::selectOne(
+        "SELECT COALESCE(g.es_administrador, false) AS admin,
+                COALESCE((SELECT a.editar
+                            FROM seguridad.accesos a
+                            JOIN seguridad.menus m ON m.id = a.menu_id
+                           WHERE a.perfil_id = u.perfil_id
+                             AND UPPER(SPLIT_PART(m.url, '/', 2)) = 'ALLPROFILES'
+                           LIMIT 1), false) AS editar
+           FROM seguridad.users u
+           LEFT JOIN seguridad.grupos g ON g.id = u.grupo_id
+          WHERE u.id = ?",
+        [(int) $u->id]
+    );
+
+    return (bool) (($fila->admin ?? false) || ($fila->editar ?? false));
+}
+
+/**
+ * Guarda esos cinco alcances.
+ *
+ * Llega {"visibilidad": {"GESTION": "PROPIO", ...}}, suelto o dentro del campo
+ * 'json' de un FormData, que es como manda este CRM el resto del perfil.
+ *
+ * Los valores no se validan aquí a mano: la función de base es la que sabe qué
+ * datos y qué alcances existen, y revienta con un mensaje claro si no cuadran.
+ * Repetir la lista en PHP es la forma segura de que dentro de un año haya dos
+ * listas distintas.
+ */
+public function editVisibilidadPerfil(Request $request, $id)
+{
+    try {
+        if (!$this->puedeAdministrarPerfiles()) {
+            sistemaLog('warning', 'Intento de cambiar la visibilidad de un perfil sin mando para hacerlo', [
+                'perfil_id' => $id,
+                'usuario'   => auth('api')->user()->login_user ?? null,
+            ]);
+            return $this->errorResponse('No tiene permiso para cambiar lo que ve un perfil', 403);
+        }
+
+        $datos = $request->input('json')
+            ? json_decode((string) $request->input('json'), true)
+            : $request->all();
+
+        if (!is_array($datos)) {
+            return $this->errorResponse('Formato JSON inválido', 400);
+        }
+
+        // Acepta tanto {"visibilidad": {...}} como el objeto a secas
+        $visibilidad = $datos['visibilidad'] ?? $datos;
+        if (!is_array($visibilidad) || !$visibilidad) {
+            return $this->errorResponse('No se recibió la visibilidad a guardar', 422);
+        }
+
+        $usuario = auth('api')->user();
+
+        $result = DB::selectOne(
+            'SELECT seguridad.fn_visibilidad_datos_guardar(
+                ?::BIGINT, ?::JSONB, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID
+             ) as result',
+            [
+                (int) $id,
+                json_encode($visibilidad),
+                $usuario->id ?? null,
+                $usuario->login_user ?? null,
+                trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid(),
+            ]
+        );
+        $r = json_decode($result->result, true);
+
+        if (!($r['success'] ?? false)) {
+            return $this->errorResponse($r['message'] ?? 'No se pudo guardar la visibilidad', 400);
+        }
+
+        sistemaLog('info', 'Visibilidad de datos modificada', [
+            'perfil_id'   => $id,
+            'visibilidad' => $r['data']['visibilidad'] ?? null,
+            'usuario'     => $usuario->login_user ?? 'desconocido',
+        ]);
+
+        return $this->successResponse($r['data'], $r['message']);
+
+    } catch (Exception $e) {
+        sistemaLog('error', 'Error en editVisibilidadPerfil', [
+            'message' => $e->getMessage(), 'line' => $e->getLine(), 'perfil_id' => $id,
+        ]);
+        return $this->errorResponse('Ocurrió un error al guardar la visibilidad', 500);
+    }
+}
+
+/**
+ * Los alcances del que está mirando, para que la pantalla sepa qué enseñar.
+ *
+ * La pantalla del cliente necesita saber, por ejemplo, si pinta la pestaña de
+ * Asignación. Antes eso lo decidía `es_admin`, que venía de refilón en la
+ * respuesta de la agenda: si la agenda fallaba, la pestaña desaparecía. Esto
+ * es una pregunta aparte y se contesta aparte.
+ *
+ * Se devuelven los cinco de una vez, no el que se pregunte: así añadir otra
+ * cosa que dependa de un alcance no añade otra petición. No hace falta
+ * ningún permiso —son los límites de quien pregunta, no los de otro—, y para
+ * un administrador son los cinco en TODO.
+ *
+ * ESCONDER NO ES PROHIBIR: lo que se decida aquí es para pintar la pantalla.
+ * Cada ruta comprueba lo suyo por su cuenta.
+ */
+public function miVisibilidad()
+{
+    try {
+        $u = auth('api')->user();
+        if (!$u) { return $this->errorResponse('Sesión no válida', 401); }
+
+        $result = DB::selectOne(
+            'SELECT seguridad.fn_visibilidad_de_usuario(?::BIGINT) as result',
+            [(int) $u->id]
+        );
+        $r = json_decode($result->result, true);
+
+        return ($r['success'] ?? false)
+            ? $this->successResponse($r['data'], $r['message'])
+            : $this->errorResponse($r['message'] ?? 'No se pudo leer la visibilidad', 400);
+
+    } catch (Exception $e) {
+        sistemaLog('error', 'Error en miVisibilidad', [
+            'message' => $e->getMessage(), 'line' => $e->getLine(),
+        ]);
+        return $this->errorResponse('Ocurrió un error al obtener la visibilidad', 500);
+    }
+}
 
 
 }

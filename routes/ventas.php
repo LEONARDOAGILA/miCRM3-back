@@ -63,6 +63,7 @@ Route::group([
     Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda?, rol? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
     Route::get('responsables/{clienteId}', [GestionController::class, 'responsables']);  // quién lo atiende ahora, por papel
+    Route::get('asignables', [GestionController::class, 'asignables']);                              // ?cliente_id= : a quién puede dejar la gestión a cargo
 });
 
 // CATÁLOGO DE GESTIÓN (tipos y sus asuntos)

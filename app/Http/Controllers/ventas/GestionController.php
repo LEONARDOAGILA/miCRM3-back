@@ -234,13 +234,23 @@ class GestionController extends Controller
             $estado    = $request->filled('estado') ? $request->input('estado') : null;
             $desde     = $request->filled('desde')  ? $request->input('desde')  : null;
             $hasta     = $request->filled('hasta')  ? $request->input('hasta')  : null;
-            // Los dos filtros del historial: cómo terminó y quién la registró
-            $resultado  = $request->filled('resultado')  ? $request->input('resultado')  : null;
-            $creadoPor  = $request->filled('creado_por') ? $request->input('creado_por') : null;
+            // Los dos filtros del historial: cómo terminó y de quién es.
+            //
+            // El de la persona filtra por RESPONSABLE (usuario_id) y no por
+            // quién la registró: desde que se puede crear una gestión para
+            // otro, lo que se busca es a quién le toca. La columna
+            // «Registrado por» se queda en la rejilla, pero no se filtra.
+            $resultado      = $request->filled('resultado')      ? $request->input('resultado') : null;
+            $responsableId  = $request->filled('responsable_id') ? (int) $request->input('responsable_id') : null;
+
+            // Quién pregunta, que es lo que decide qué gestiones del cliente se le
+            // devuelven (ver seguridad.fn_usuarios_visibles). No es opcional: la
+            // función falla cerrado y sin usuario no devuelve ninguna.
+            $quien = auth('api')->id();
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::VARCHAR) as result',
-                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $creadoPor]
+                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::BIGINT, ?::BIGINT) as result',
+                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $responsableId, $quien]
             );
             $resultado = json_decode($result->result, true);
 
@@ -257,6 +267,25 @@ class GestionController extends Controller
     public function findByIdGestion($id)
     {
         try {
+            // La puerta estrecha: por aquí entran «ver» y «editar» con un id a
+            // mano, y sin esto una gestión tapada en la rejilla se seguía
+            // abriendo escribiendo su número en la url. Se pregunta antes de
+            // leerla, y la función ya sabe que una importada obedece al
+            // interruptor de WhatsApp.
+            [$quien] = $this->contextoUsuario();
+            $puede = DB::selectOne(
+                'SELECT ventas.fn_gestion_visible_para(?::BIGINT, ?::BIGINT) AS si',
+                [(int) $id, $quien]
+            );
+            if (!($puede->si ?? false)) {
+                sistemaLog('warning', 'Intento de abrir una gestión fuera de su visibilidad', [
+                    'gestion_id' => $id, 'usuario_id' => $quien,
+                ]);
+                // Un mensaje para los dos casos a propósito: si dijera «no
+                // existe» cuando no existe, probando ids se sabría cuáles hay
+                return $this->errorResponse('Esta gestión no existe o no está a su alcance', 403);
+            }
+
             $result = DB::selectOne('SELECT ventas.fn_gestiones_obtener(?::BIGINT) as result', [(int) $id]);
             $resultado = json_decode($result->result, true);
             if (!$resultado['success']) {
@@ -360,7 +389,14 @@ class GestionController extends Controller
     public function resumen($clienteId)
     {
         try {
-            $result = DB::selectOne('SELECT ventas.fn_gestiones_resumen(?::BIGINT) as result', [(int) $clienteId]);
+            // Quién pregunta: las cifras son de lo que esa persona puede ver, y
+            // «última gestión» trae la gestión entera, nota incluida
+            [$quien] = $this->contextoUsuario();
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_resumen(?::BIGINT, ?::BIGINT) as result',
+                [(int) $clienteId, $quien]
+            );
             $resultado = json_decode($result->result, true);
             return $resultado['success']
                 ? $this->successResponse($resultado['data'], $resultado['message'])
@@ -383,7 +419,14 @@ class GestionController extends Controller
     public function importadas($clienteId)
     {
         try {
-            $result = DB::selectOne('SELECT ventas.fn_gestiones_importadas(?::BIGINT) as result', [(int) $clienteId]);
+            // Quién pregunta: estas obedecen al dato WHATSAPP, no al de las
+            // gestiones normales
+            [$quien] = $this->contextoUsuario();
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_importadas(?::BIGINT, ?::BIGINT) as result',
+                [(int) $clienteId, $quien]
+            );
             $resultado = json_decode($result->result, true);
             return $resultado['success']
                 ? $this->successResponse($resultado['data'], $resultado['message'])
@@ -451,6 +494,62 @@ class GestionController extends Controller
     // CREAR / MODIFICAR / CERRAR / ELIMINAR
     // ================================================================
 
+    /**
+     * A qué usuarios puede quien pregunta dejar una gestión a cargo.
+     *
+     * ?cliente_id= es importante: sin él la lista es sólo su jerarquía, y con
+     * él entran además los responsables de ese cliente —que es lo que permite
+     * pasarle una cobranza al cobrador del cliente aunque no esté por debajo—.
+     *
+     * Siempre trae al propio usuario primero: lo normal es quedarse la gestión.
+     */
+    public function asignables(Request $request)
+    {
+        try {
+            [$quien] = $this->contextoUsuario();
+            $clienteId = $request->filled('cliente_id') ? (int) $request->input('cliente_id') : null;
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_asignables(?::BIGINT, ?::BIGINT) as result',
+                [$quien, $clienteId]
+            );
+            $r = json_decode($result->result, true);
+
+            return ($r['success'] ?? false)
+                ? $this->successResponse($r['data'], $r['message'])
+                : $this->errorResponse($r['message'] ?? 'No se pudo leer la lista', 400);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en asignables', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al obtener los usuarios asignables', 500);
+        }
+    }
+
+    /**
+     * Devuelve la respuesta de rechazo si NO puede asignarle a ese usuario, o
+     * null si puede. La regla vive en la base, en fn_gestion_puede_asignar.
+     */
+    private function vetoDeResponsable(?int $responsableId, int $clienteId)
+    {
+        if (!$responsableId) { return null; }   // sin elegir: la función pone a quien la crea
+
+        [$quien] = $this->contextoUsuario();
+        $puede = DB::selectOne(
+            'SELECT ventas.fn_gestion_puede_asignar(?::BIGINT, ?::BIGINT, ?::BIGINT) AS si',
+            [$quien, $responsableId, $clienteId ?: null]
+        );
+
+        if ($puede->si ?? false) { return null; }
+
+        sistemaLog('warning', 'Intento de asignar una gestión a un usuario fuera de su alcance', [
+            'usuario_id' => $quien, 'responsable_id' => $responsableId, 'cliente_id' => $clienteId,
+        ]);
+        return $this->errorResponse(
+            'No puede dejar esta gestión a cargo de ese usuario: elija alguien de su equipo o un responsable del cliente.',
+            422
+        );
+    }
+
     public function addGestion(Request $request)
     {
         try {
@@ -459,6 +558,16 @@ class GestionController extends Controller
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
             $d = $validator->validated();
+
+            // ¿Puede dejarla a cargo de ese otro? La regla es la de
+            // ventas.fn_gestiones_asignables —su jerarquía, los responsables
+            // del cliente y él mismo—, y se comprueba aquí porque una gestión
+            // asignada entra en la agenda de otra persona: si la comprobación
+            // viviera sólo en la pantalla, una petición a mano le metería
+            // trabajo a cualquiera.
+            if ($error = $this->vetoDeResponsable($d['usuario_id'] ?? null, (int) $d['cliente_id'])) {
+                return $error;
+            }
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_crear(?::BIGINT, ' . self::CASTS_DATOS . ', ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
@@ -486,6 +595,13 @@ class GestionController extends Controller
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
             $d = $validator->validated();
+
+            // El cliente sale de la gestión y no del cuerpo: al modificar no
+            // se manda, y es el que decide a quién se le puede pasar
+            $cliente = DB::selectOne('SELECT cliente_id FROM ventas.gestiones WHERE id = ?', [(int) $id]);
+            if ($error = $this->vetoDeResponsable($d['usuario_id'] ?? null, (int) ($cliente->cliente_id ?? 0))) {
+                return $error;
+            }
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_modificar(?::BIGINT, ' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
@@ -523,18 +639,42 @@ class GestionController extends Controller
                 'siguiente'           => 'nullable|array',
                 'siguiente.fecha'     => 'required_with:siguiente|date',
                 'siguiente.asunto'    => 'nullable|string|max:200',
-                'siguiente.tipo'      => 'nullable|string|in:LLAMADA,WHATSAPP,CORREO,VISITA,REUNION,OTRO',
+                // Del catálogo, igual que al registrar: el seguimiento es una
+                // gestión como las demás y tiene que poder agruparse por
+                // asunto. El texto se queda para las pantallas que aún no lo
+                // mandan, y la función de base ya comprueba que el asunto
+                // pertenezca al tipo del seguimiento.
+                'siguiente.asunto_id' => 'nullable|integer|exists:pgsql.ventas.gestiones_asuntos,id',
+                // El tipo también sale del catálogo y no de una lista escrita
+                // aquí: con la lista a fuego, un tipo nuevo no se podía usar
+                // en un seguimiento.
+                'siguiente.tipo'      => 'nullable|string|exists:pgsql.ventas.gestiones_tipos,codigo',
                 'siguiente.prioridad' => 'nullable|string|in:ALTA,MEDIA,BAJA',
                 'siguiente.nota'      => 'nullable|string|max:4000',
+                // A quién le toca el seguimiento. Sin esto lo heredaba a la
+                // fuerza de la gestión que se cierra.
+                'siguiente.usuario_id' => 'nullable|integer|exists:pgsql.seguridad.users,id',
             ], [
                 'resultado.required'       => 'Debe indicar cómo terminó la gestión',
                 'resultado.in'             => 'El resultado no es válido',
                 'siguiente.fecha.required_with' => 'El seguimiento necesita fecha y hora',
+                'siguiente.tipo.exists'    => 'El tipo de gestión no está en el catálogo',
+                'siguiente.asunto_id.exists' => 'El asunto elegido ya no está en el catálogo',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
             $d = $validator->validated();
+
+            // ¿Puede dejar el seguimiento a cargo de ese otro? La misma regla
+            // que al registrar (ventas.fn_gestiones_asignables), y por lo
+            // mismo: la gestión nueva entra en la agenda de otra persona.
+            $cliente = DB::selectOne('SELECT cliente_id FROM ventas.gestiones WHERE id = ?', [(int) $id]);
+            if ($error = $this->vetoDeResponsable(
+                    isset($d['siguiente']['usuario_id']) ? (int) $d['siguiente']['usuario_id'] : null,
+                    (int) ($cliente->cliente_id ?? 0))) {
+                return $error;
+            }
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_cerrar(?::BIGINT, ?::VARCHAR, ?::TEXT, ?::INTEGER, ?::TIMESTAMPTZ, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
@@ -684,10 +824,35 @@ class GestionController extends Controller
         }
     }
 
-    /** Por qué manos ha pasado el cliente, en cualquiera de los papeles. */
+    /**
+     * Por qué manos ha pasado el cliente, en cualquiera de los papeles.
+     *
+     * Es el historial de responsables, y lo decide el alcance ASIGNACION del
+     * perfil —el quinto del cuadro «Qué ve dentro de un cliente»—, no el hecho
+     * de ser administrador.
+     *
+     * SE COMPRUEBA AQUÍ. Hasta ahora la pestaña se escondía en Angular y esta
+     * ruta no preguntaba nada: con la sesión de cualquier usuario devolvía el
+     * historial entero. Esconder una pestaña no cierra una ruta.
+     *
+     * Para este dato los alcances «de quién» no significan nada: se ve o no se
+     * ve. Por eso se compara contra NINGUNO y no contra TODO —si alguien deja
+     * un A_CARGO puesto a mano, se trata como que sí la ve, que es lo que la
+     * pantalla del perfil da a entender—.
+     */
     public function asignaciones($clienteId)
     {
         try {
+            $usuario = auth('api')->user();
+            $alcance = DB::selectOne(
+                'SELECT seguridad.fn_alcance(?::BIGINT, ?) AS alcance',
+                [$usuario->id ?? null, 'ASIGNACION']
+            );
+
+            if (($alcance->alcance ?? 'NINGUNO') === 'NINGUNO') {
+                return $this->errorResponse('Su perfil no tiene acceso a las asignaciones del cliente', 403);
+            }
+
             $result = DB::selectOne('SELECT ventas.fn_asignaciones_listar(?::BIGINT) as result', [(int) $clienteId]);
             $resultado = json_decode($result->result, true);
             return $resultado['success']

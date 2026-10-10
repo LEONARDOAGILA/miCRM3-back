@@ -42,6 +42,7 @@ Route::group([
     // Usuario final
     Route::get('misArchivos', [PermisoArchivoController::class, 'misArchivos']);                     // árbol con lo que puede ver
     Route::get('miPermisoArchivo/{id}', [PermisoArchivoController::class, 'miPermiso']);
+    Route::get('soyAdminDeArchivos', [PermisoArchivoController::class, 'soyAdminDeArchivos']);        // si su grupo administra
     Route::post('abrirArchivo/{id}', [PermisoArchivoController::class, 'abrir']);                    // autoriza ejecutar + registra acceso
 
     // Papelera de reciclaje (borrado lógico)
