@@ -34,6 +34,10 @@ use App\Http\Resources\ApiResponder;
  */
 class GestionController extends Controller
 {
+    // El traductor del modelo de filtros de ag-Grid, compartido con las
+    // demás pantallas que paginan en el servidor
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
     use ApiResponder;
 
     /** SQLSTATE de las reglas de negocio de ventas.fn_gestiones_* → código HTTP. */
@@ -76,32 +80,40 @@ class GestionController extends Controller
         ];
     }
 
-    /**
-     * Si quien pregunta es administrador.
-     *
-     * Manda `es_administrador` del GRUPO, que es la misma señal con la que se
-     * recortan la lista de clientes, la agenda y el tablero. No se mira
-     * users.type_user: ése lo pone quien crea el usuario y puede quedarse
-     * atrás si luego se le cambia de grupo. La pantalla sí lo usa, pero para
-     * decidir qué enseña, que es otra cosa.
-     */
-    private function esAdministrador(): bool
-    {
-        $id = auth('api')->user()->id ?? null;
-        if (!$id) { return false; }
-
-        $fila = DB::selectOne(
-            'SELECT COALESCE(g.es_administrador, false) AS admin
-               FROM seguridad.users u
-               LEFT JOIN seguridad.grupos g ON g.id = u.grupo_id
-              WHERE u.id = ?::BIGINT',
-            [(int) $id]
-        );
-        return (bool) ($fila->admin ?? false);
-    }
-
     /** Los papeles con los que se atiende a un cliente. */
     private const ROLES_RESPONSABLE = ['VENDEDOR', 'COBRADOR', 'ASISTENTE', 'POSTVENTA'];
+
+    /**
+     * Qué papeles puede repartir quien pregunta.
+     *
+     * Sale del cuadro «Qué ve dentro de un cliente» de su perfil, papel a
+     * papel. Un administrador los recibe los cuatro sin que nadie se lo
+     * configure, porque fn_alcance le contesta TODO sin mirar la tabla.
+     *
+     * Vacío significa que esa persona no tiene nada que hacer en la pantalla
+     * de reparto.
+     */
+    private function papelesQueReparte(): array
+    {
+        $fila = DB::selectOne(
+            'SELECT seguridad.fn_papeles_que_reparte(?::BIGINT) AS papeles',
+            [auth('api')->id()]
+        );
+
+        // Postgres devuelve el array como '{VENDEDOR,COBRADOR}'
+        $crudo = trim((string) ($fila->papeles ?? ''), '{}');
+        return $crudo === '' ? [] : explode(',', $crudo);
+    }
+
+    /** Si puede repartir ESE papel. */
+    private function puedeRepartir(string $rol): bool
+    {
+        $fila = DB::selectOne(
+            'SELECT seguridad.fn_puede_repartir(?::BIGINT, ?::VARCHAR) AS puede',
+            [auth('api')->id(), strtoupper($rol)]
+        );
+        return (bool) ($fila->puede ?? false);
+    }
 
     /**
      * Por qué columnas deja filtrar la pantalla de reparto, y de qué tipo.
@@ -127,63 +139,6 @@ class GestionController extends Controller
         'asistente_nombre'      => 'texto',
         'postventa_nombre'      => 'texto',
     ];
-
-    /** Las operaciones de ag-Grid que la base sabe aplicar. */
-    private const OPERACIONES = [
-        'texto'  => ['contains', 'notContains', 'equals', 'notEqual', 'startsWith', 'endsWith', 'blank', 'notBlank'],
-        'numero' => ['equals', 'notEqual', 'lessThan', 'lessThanOrEqual', 'greaterThan', 'greaterThanOrEqual', 'inRange', 'blank', 'notBlank'],
-    ];
-
-    /**
-     * Traduce el modelo de filtros de ag-Grid a lo que entiende la función.
-     *
-     * Llega tal cual lo da la rejilla —{"canton":{"filterType":"text",
-     * "type":"contains","filter":"manta"}}— y sale normalizado a
-     * {"canton":{"op":"contains","valor":"manta"}}.
-     *
-     * Se tira en silencio todo lo que no cuadre: una columna que no está en
-     * la lista blanca, una operación que la base no sabe aplicar, o un filtro
-     * sin valor cuando la operación lo necesita. Un filtro que no se entiende
-     * no es un error del que usa la pantalla; devolverle un 422 por algo que
-     * no ha escrito él sería peor que no filtrar por eso.
-     */
-    private function filtrosDeColumna(?string $crudo): array
-    {
-        if (!$crudo) { return []; }
-
-        $modelo = json_decode($crudo, true);
-        if (!is_array($modelo)) { return []; }
-
-        $limpio = [];
-        foreach ($modelo as $columna => $f) {
-            $tipo = self::COLUMNAS_FILTRABLES[$columna] ?? null;
-            if ($tipo === null || !is_array($f)) { continue; }
-
-            // ag-Grid permite juntar dos condiciones con Y/O. La pantalla lo
-            // tiene desactivado, pero si llegara se coge la primera en vez de
-            // filtrar por algo que no se pidió.
-            if (isset($f['condition1'])) { $f = $f['condition1']; }
-
-            $op = (string) ($f['type'] ?? 'contains');
-            if (!in_array($op, self::OPERACIONES[$tipo], true)) { continue; }
-
-            $vacio = in_array($op, ['blank', 'notBlank'], true);
-            $valor = $f['filter'] ?? null;
-            if (!$vacio && ($valor === null || $valor === '')) { continue; }
-
-            $limpio[$columna] = ['op' => $op];
-            if (!$vacio) {
-                $limpio[$columna]['valor'] = $tipo === 'numero' ? (string) (0 + $valor) : (string) $valor;
-            }
-            if ($op === 'inRange') {
-                $hasta = $f['filterTo'] ?? null;
-                if ($hasta === null || $hasta === '') { unset($limpio[$columna]); continue; }
-                $limpio[$columna]['valor2'] = (string) (0 + $hasta);
-            }
-        }
-
-        return $limpio;
-    }
 
     /** Los mismos marcadores de auditoría que usan las demás funciones. */
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
@@ -848,15 +803,19 @@ class GestionController extends Controller
     public function reasignar(Request $request, $clienteId)
     {
         try {
-            // Repartir clientes es cosa de administradores. En la pantalla la
-            // pestaña de Asignación ni se enseña al resto, pero eso es lo que
-            // se ve: la ruta sigue existiendo y aquí es donde se cierra.
-            if (!$this->esAdministrador()) {
-                sistemaLog('warning', 'Reasignación rechazada: no es administrador', [
+            // Repartir un cliente es el mismo permiso que repartir mil, así
+            // que se mide con la misma vara: el papel que se va a cambiar.
+            // Antes aquí ponía «es administrador» y en la pantalla de reparto
+            // otra cosa; dos varas para la misma decisión acaban separándose.
+            $rolPedido = strtoupper((string) ($this->datosDe($request)['rol'] ?? 'VENDEDOR'));
+
+            if (!in_array($rolPedido, self::ROLES_RESPONSABLE, true) || !$this->puedeRepartir($rolPedido)) {
+                sistemaLog('warning', 'Reasignación rechazada: no puede repartir ese papel', [
                     'cliente_id' => $clienteId,
+                    'rol'        => $rolPedido,
                     'usuario'    => $request->user()->login_user ?? null,
                 ]);
-                return $this->errorResponse('Sólo un administrador puede cambiar quién atiende al cliente', 403);
+                return $this->errorResponse('Su perfil no puede cambiar quién atiende al cliente como ' . ucfirst(strtolower($rolPedido)), 403);
             }
 
             $validator = Validator::make($this->datosDe($request), [
@@ -976,8 +935,11 @@ class GestionController extends Controller
     public function clientesParaAsignar(Request $request)
     {
         try {
-            if (!$this->esAdministrador()) {
-                return $this->errorResponse('Sólo un administrador puede repartir clientes', 403);
+            // Ver la lista no reparte nada, pero si no puede repartir ningún
+            // papel tampoco tiene por qué ver la cartera entera
+            $papeles = $this->papelesQueReparte();
+            if (!$papeles) {
+                return $this->errorResponse('Su perfil no puede repartir clientes', 403);
             }
 
             $validator = Validator::make($request->all(), [
@@ -996,15 +958,22 @@ class GestionController extends Controller
                     (int) $request->input('page', 1),
                     (int) $request->input('per_page', 20),
                     (string) $request->input('search', ''),
-                    json_encode((object) $this->filtrosDeColumna($request->input('filtros'))),
+                    json_encode((object) $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES)),
                     auth('api')->id(),
                 ]
             );
             $r = json_decode($result->result, true);
 
-            return ($r['success'] ?? false)
-                ? $this->successResponse($r['data'], $r['message'])
-                : $this->errorResponse($r['message'] ?? 'No se pudo listar los clientes', 400);
+            if (!($r['success'] ?? false)) {
+                return $this->errorResponse($r['message'] ?? 'No se pudo listar los clientes', 400);
+            }
+
+            // Viaja con la lista para que la pantalla ofrezca sólo los papeles
+            // que esta persona puede repartir. Es para pintar: quien decide de
+            // verdad es reasignarMasivo, que lo vuelve a comprobar.
+            $r['data']['meta']['papeles'] = $papeles;
+
+            return $this->successResponse($r['data'], $r['message']);
 
         } catch (Exception $e) {
             sistemaLog('error', 'Error en clientesParaAsignar', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
@@ -1026,11 +995,18 @@ class GestionController extends Controller
     public function reasignarMasivo(Request $request)
     {
         try {
-            if (!$this->esAdministrador()) {
-                sistemaLog('warning', 'Reparto masivo rechazado: no es administrador', [
+            // El papel se valida ABAJO, pero el permiso se mira sobre lo que
+            // llega: repartir cobradores y repartir vendedores son dos
+            // permisos distintos, y quien tenga uno no puede colar el otro
+            // cambiando un campo del formulario.
+            $rol = strtoupper((string) ($this->datosDe($request)['rol'] ?? 'VENDEDOR'));
+
+            if (!in_array($rol, self::ROLES_RESPONSABLE, true) || !$this->puedeRepartir($rol)) {
+                sistemaLog('warning', 'Reparto masivo rechazado: no puede repartir ese papel', [
+                    'rol'     => $rol,
                     'usuario' => $request->user()->login_user ?? null,
                 ]);
-                return $this->errorResponse('Sólo un administrador puede repartir clientes', 403);
+                return $this->errorResponse('Su perfil no puede repartir clientes como ' . ucfirst(strtolower($rol)), 403);
             }
 
             $validator = Validator::make($this->datosDe($request), [

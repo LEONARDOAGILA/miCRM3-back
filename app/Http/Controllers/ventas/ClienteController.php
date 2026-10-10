@@ -42,6 +42,46 @@ use App\Http\Resources\ApiResponder;
  */
 class ClienteController extends Controller
 {
+    // El traductor del modelo de filtros de ag-Grid, compartido con las
+    // demás pantallas que paginan en el servidor
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de clientes, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'                    => 'numero',
+        'limite_credito'        => 'numero',
+        'dias_credito'          => 'numero',
+        'descuento'             => 'numero',
+        'tipo_cliente'          => 'texto',
+        'tipo_identificacion'   => 'texto',
+        'numero_identificacion' => 'texto',
+        'nombre_completo'       => 'texto',
+        'nombre_comercial'      => 'texto',
+        'email'                 => 'texto',
+        'celular'               => 'texto',
+        'telefono'              => 'texto',
+        'direccion'             => 'texto',
+        'provincia'             => 'texto',
+        'canton'                => 'texto',
+        'parroquia'             => 'texto',
+        'forma_pago'            => 'texto',
+        'estado'                => 'texto',
+        'vendedor_nombre'       => 'texto',
+        'created_by'            => 'texto',
+        'updated_by'            => 'texto',
+        // Como texto sobre la fecha ya formateada: «2026-10» busca el mes
+        'created_at'            => 'texto',
+        'updated_at'            => 'texto',
+    ];
+
     use ApiResponder;
 
     private const CARPETA_FOTOS = 'img/clientes';
@@ -258,9 +298,15 @@ class ClienteController extends Controller
             $soloMios  = filter_var($request->query('mios', false), FILTER_VALIDATE_BOOLEAN);
             $usuarioId = $soloMios ? ($request->user()->id ?? null) : null;
 
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no en
+            // el navegador: la pantalla pagina en el servidor, así que ag-Grid
+            // sólo tiene quince filas y filtrando por su cuenta buscaría dentro
+            // de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_clientes_listar_paginado(?, ?, ?, ?, ?) as result',
-                [$page, $perPage, $search, $estado, $usuarioId]
+                'SELECT ventas.fn_clientes_listar_paginado(?, ?, ?, ?, ?, ?::JSONB) as result',
+                [$page, $perPage, $search, $estado, $usuarioId, json_encode((object) $filtros)]
             );
             $resultado = json_decode($result->result, true);
             if (isset($resultado['success']) && $resultado['success'] === false) {
