@@ -8,6 +8,7 @@ use App\Http\Controllers\ventas\CatalogoGestionController;
 use App\Http\Controllers\ventas\WhatsappPlantillaController;
 use App\Http\Controllers\ventas\ArchivoClienteController;
 use App\Http\Controllers\ventas\NotaClienteController;
+use App\Http\Controllers\ventas\ZonaController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -137,4 +138,20 @@ Route::group(['prefix' => 'whatsapp'], function () {
         Route::get('sinAsignar', [WhatsappController::class, 'sinAsignar']);                   // ?limite=50
         Route::post('asignar', [WhatsappController::class, 'asignar']);                        // { numero, cliente_id }
     });
+});
+
+
+// ZONAS DE CLIENTES
+// Áreas dibujadas en el mapa para saber qué clientes caen dentro. El prefijo
+// cuelga de /ventas, que ya está en config/cors.php, así que no hay que
+// añadir nada allí.
+Route::group([
+    'prefix' => 'zona', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allZonas', [ZonaController::class, 'allZonas']);                 // ?inactivas=0
+    Route::get('findByIdZona/{id}', [ZonaController::class, 'findByIdZona']);
+    Route::get('clientes/{id}', [ZonaController::class, 'clientes']);            // ?page&per_page&search
+    Route::post('saveZona', [ZonaController::class, 'saveZona']);                // { nombre, tipo, vertices|centro+radio, color? }
+    Route::post('saveZona/{id}', [ZonaController::class, 'saveZona']);
+    Route::delete('deleteZona/{id}', [ZonaController::class, 'deleteZona']);
 });
