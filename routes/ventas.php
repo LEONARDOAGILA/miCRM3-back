@@ -151,6 +151,7 @@ Route::group([
     Route::get('allZonas', [ZonaController::class, 'allZonas']);                 // ?inactivas=0
     Route::get('findByIdZona/{id}', [ZonaController::class, 'findByIdZona']);
     Route::get('clientes/{id}', [ZonaController::class, 'clientes']);            // ?page&per_page&search
+    Route::get('clientesUbicados', [ZonaController::class, 'clientesUbicados']); // ?limite&min_lat&max_lat&min_lng&max_lng
     Route::post('saveZona', [ZonaController::class, 'saveZona']);                // { nombre, tipo, vertices|centro+radio, color? }
     Route::post('saveZona/{id}', [ZonaController::class, 'saveZona']);
     Route::delete('deleteZona/{id}', [ZonaController::class, 'deleteZona']);

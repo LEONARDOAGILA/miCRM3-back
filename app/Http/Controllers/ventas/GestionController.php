@@ -1013,19 +1013,22 @@ class GestionController extends Controller
                 'per_page' => 'nullable|integer|min:1|max:200',
                 'search'   => 'nullable|string|max:200',
                 'filtros'  => 'nullable|string|max:4000',
+                // Para repartir sólo los de un área dibujada en el mapa
+                'zona_id'  => 'nullable|integer|min:1',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_clientes_asignacion_listar(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB, ?::BIGINT) as result',
+                'SELECT ventas.fn_clientes_asignacion_listar(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB, ?::BIGINT, ?::BIGINT) as result',
                 [
                     (int) $request->input('page', 1),
                     (int) $request->input('per_page', 20),
                     (string) $request->input('search', ''),
                     json_encode((object) $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_REPARTO)),
                     auth('api')->id(),
+                    $request->filled('zona_id') ? (int) $request->input('zona_id') : null,
                 ]
             );
             $r = json_decode($result->result, true);

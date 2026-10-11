@@ -31,6 +31,7 @@ use Illuminate\Validation\Rule;
  *   POST   saveZona/{id}
  *   DELETE deleteZona/{id}
  *   GET    clientes/{id}?page&per_page&search
+ *   GET    clientesUbicados?limite&min_lat&max_lat&min_lng&max_lng
  */
 class ZonaController extends Controller
 {
@@ -160,6 +161,48 @@ class ZonaController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en clientes de la zona', ['zona_id' => $id, 'message' => $e->getMessage()]);
             return $this->errorResponse('Ocurrió un error al obtener los clientes de la zona', 500);
+        }
+    }
+
+    /**
+     * Todos los clientes que tienen coordenadas, para pintarlos en el mapa.
+     *
+     * Va aparte de `clientes` porque contesta otra pregunta: aquél dice quién
+     * cae dentro de una zona y devuelve la ficha resumida para la tabla; éste
+     * dice dónde está todo el mundo y devuelve cuatro campos, porque son mil
+     * puntos y mandar la ficha de cada uno sería mover un megabyte para
+     * dibujar puntitos.
+     *
+     * Se puede acotar a lo que se ve en el mapa con min_lat…max_lng.
+     */
+    public function clientesUbicados(Request $request)
+    {
+        try {
+            $limite = (int) $request->input('limite', 2000);
+
+            // Los cuatro o ninguno: media caja no acota nada
+            $caja = ['min_lat', 'max_lat', 'min_lng', 'max_lng'];
+            $hayCaja = count(array_filter($caja, fn($k) => $request->filled($k))) === 4;
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_ubicados(?::INTEGER, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC) as result',
+                [
+                    $limite,
+                    $hayCaja ? (float) $request->input('min_lat') : null,
+                    $hayCaja ? (float) $request->input('max_lat') : null,
+                    $hayCaja ? (float) $request->input('min_lng') : null,
+                    $hayCaja ? (float) $request->input('max_lng') : null,
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            return ($r['success'] ?? false)
+                ? $this->successResponse(['data' => $r['data'], 'meta' => $r['meta']], $r['message'])
+                : $this->errorResponse($r['message'], 500);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en clientesUbicados', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al obtener los clientes ubicados', 500);
         }
     }
 
