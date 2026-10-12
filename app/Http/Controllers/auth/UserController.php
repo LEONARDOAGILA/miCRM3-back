@@ -285,6 +285,63 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Pone `isactive` y nada mas.
+     *
+     * Existe aparte de editUser porque bajar la casilla de la rejilla no tiene
+     * por que revalidar la ficha entera: fn_usuarios_modificar vuelve a pasar
+     * por login, correo y tipo de usuario, y uno cargado antes de que
+     * existieran esas reglas no se podria desactivar hasta arreglarle el resto.
+     *
+     * NADIE PUEDE DESACTIVARSE A SI MISMO. El middleware VerificarUsuarioActivo
+     * contesta 401 a toda ruta cuando isactive es false: quien se apague a si
+     * mismo se queda fuera del CRM y ya no puede entrar a deshacerlo. El
+     * cerrojo esta en la funcion de la base, no aqui, para que valga tambien
+     * si alguien llama a la ruta por su cuenta.
+     */
+    public function activarUser(Request $request, $id)
+    {
+        $usuario = auth('api')->user();
+        try {
+            // El booleano con filter_var: "false" en texto es true a secas
+            $activo = $request->exists('activo') && $request->input('activo') !== null && $request->input('activo') !== ''
+                ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT seguridad.fn_usuarios_activar(?::BIGINT, ?::BOOLEAN, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result',
+                [
+                    (int) $id,
+                    $activo,
+                    $usuario->id ?? null,
+                    $usuario->login_user ?? null,
+                    trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+                    $request->ip(),
+                    $request->userAgent(),
+                    (string) Str::uuid(),
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                $codigo = match ($r['error_code'] ?? '') {
+                    'NO_EXISTE'               => 404,
+                    'EN_PAPELERA', 'YO_MISMO' => 409,
+                    default                   => 500,
+                };
+                sistemaLog('warning', 'activarUser rechazado', ['user_id' => $id, 'error_code' => $r['error_code'] ?? null]);
+                return $this->errorResponse($r['message'], $codigo);
+            }
+
+            sistemaLog('info', 'Usuario activado/desactivado', ['user_id' => $id, 'isactive' => $r['data']['isactive'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarUser', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'user_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del usuario', 500);
+        }
+    }
+
     public function editUser(Request $request, $id)
     {
         try {

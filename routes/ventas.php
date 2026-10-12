@@ -27,6 +27,7 @@ Route::group([
     Route::post('addCliente', [ClienteController::class, 'addCliente'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('editCliente/{id}', [ClienteController::class, 'editCliente'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::delete('deleteCliente/{id}', [ClienteController::class, 'deleteCliente'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::post('activarCliente/{id}', [ClienteController::class, 'activarCliente'])->middleware(['jwt.auth', 'usuario.activo']);   // { activo? }; sin ella, alterna
     Route::post('addImagen', [ClienteController::class, 'addImagen'])->middleware(['jwt.auth', 'usuario.activo']);           // { ClienteId, imagen_file }
     Route::get('listContactos/{id}', [ClienteController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // personas de contacto
     Route::post('guardarContactos/{id}', [ClienteController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza

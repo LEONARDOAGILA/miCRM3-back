@@ -322,6 +322,62 @@ class BoletinController extends Controller
         return $this->guardar($request, null);
     }
 
+    /**
+     * Pone `activo` y nada mas.
+     *
+     * Existe aparte de editBoletin porque bajar la casilla de la rejilla no
+     * tiene por que reescribir el boletin entero: editBoletin vuelve a guardar
+     * destinatarios, imagenes y fechas, y para apagar un aviso eso es mucho
+     * ruido y mucho riesgo.
+     *
+     * DEVUELVE TAMBIEN `estado`. En boletines «estado» no es una columna: lo
+     * calcula la base a partir de `activo` y de las fechas (INACTIVO,
+     * PROGRAMADO, CADUCADO, VIGENTE), asi que viene recalculado para que la
+     * rejilla no se quede diciendo «Vigente» en uno que acaba de apagarse.
+     *
+     * `activo` es opcional: sin el, la funcion alterna. La pantalla si lo manda
+     * para que dos personas pulsando a la vez no acaben peleando por «lo
+     * contrario de lo que habia».
+     */
+    public function activarBoletin(Request $request, $id)
+    {
+        try {
+            // El booleano con filter_var: "false" en texto es true a secas
+            $activo = $request->exists('activo') && $request->input('activo') !== null && $request->input('activo') !== ''
+                ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT core.fn_boletines_activar(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $activo], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            // La funcion no levanta excepcion: contesta success=false con un
+            // codigo, y de ahi sale el estado HTTP
+            if (!($r['success'] ?? false)) {
+                $codigo = match ($r['error_code'] ?? '') {
+                    'NO_EXISTE'   => 404,
+                    'EN_PAPELERA' => 409,
+                    default       => 500,
+                };
+                sistemaLog('warning', 'activarBoletin rechazado', ['boletin_id' => $id, 'error_code' => $r['error_code'] ?? null]);
+                return $this->errorResponse($r['message'], $codigo);
+            }
+
+            sistemaLog('info', 'Boletín activado/desactivado', ['boletin_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'activarBoletin rechazado', ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'boletin_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarBoletin', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'boletin_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del boletín', 500);
+        }
+    }
+
     public function editBoletin(Request $request, $id)
     {
         return $this->guardar($request, (int) $id);

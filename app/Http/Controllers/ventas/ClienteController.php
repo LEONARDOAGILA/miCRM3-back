@@ -26,6 +26,7 @@ use App\Http\Resources\ApiResponder;
  *   GET    ventas/cliente/findByIdCliente/{id}
  *   POST   ventas/cliente/addCliente
  *   POST   ventas/cliente/editCliente/{id}
+ *   POST   ventas/cliente/activarCliente/{id}      { activo? }; sin ella, alterna
  *   DELETE ventas/cliente/deleteCliente/{id}
  *   POST   ventas/cliente/addImagen                { ClienteId, imagen_file }
  *   GET    ventas/cliente/getImagenCliente/{id}    (pública, la usa <img src>)
@@ -404,6 +405,49 @@ class ClienteController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en editCliente', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cliente_id' => $id]);
             return $this->errorResponse('Ocurrió un error al actualizar el cliente', 500);
+        }
+    }
+
+    /**
+     * Pone `activo` y nada más.
+     *
+     * Existe aparte de editCliente porque bajar la casilla de la rejilla no
+     * tiene por qué revalidar la ficha entera: fn_clientes_modificar vuelve a
+     * pasar por identificación, correos, cupo y descuento, y un cliente con
+     * cualquiera de esas cosas mal —cargado antes de que existiera la regla—
+     * no se podría desactivar hasta arreglarle el resto.
+     *
+     * `activo` es opcional: sin él la función alterna. La pantalla sí lo manda
+     * para que dos personas pulsando a la vez no acaben peleando por «lo
+     * contrario de lo que había».
+     *
+     * Quién puede hacerlo lo deciden el middleware y el perfil, igual que en
+     * editCliente: esto no es una puerta más abierta, es la misma por la que
+     * ya se cambiaba la casilla guardando el formulario.
+     */
+    public function activarCliente(Request $request, $id)
+    {
+        try {
+            $d = $this->datosDe($request);
+            $activo = array_key_exists('activo', $d) && $d['activo'] !== null && $d['activo'] !== ''
+                ? filter_var($d['activo'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_activar(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $activo], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+            sistemaLog('info', 'Cliente activado/desactivado', ['cliente_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'activarCliente rechazado', ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'cliente_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarCliente', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cliente_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del cliente', 500);
         }
     }
 

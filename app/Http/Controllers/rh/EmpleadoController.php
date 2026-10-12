@@ -285,6 +285,66 @@ class EmpleadoController extends Controller
         }
     }
 
+    /**
+     * Pone `activo` y nada mas.
+     *
+     * Existe aparte de editEmpleado porque bajar la casilla de la rejilla no
+     * tiene por que revalidar la ficha entera: rh.fn_empleados_modificar vuelve a
+     * pasar por todas sus reglas, y un registro que hoy no las cumpliria
+     * —cargado antes de que existieran— no se podria desactivar hasta
+     * arreglarle todo lo demas.
+     *
+     * `activo` es opcional: sin el, la funcion alterna. La pantalla si lo manda
+     * para que dos personas pulsando a la vez no acaben peleando por «lo
+     * contrario de lo que habia».
+     *
+     * No toca `estado`: la situacion laboral (ACTIVO, VACACIONES, LIQUIDADO) es
+     * otra cosa, y en el formulario tambien se guardan por separado.
+     */
+    public function activarEmpleado(Request $request, $id)
+    {
+        [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
+        try {
+            // El booleano con filter_var: "false" en texto es true a secas
+            $activo = $request->exists('activo') && $request->input('activo') !== null && $request->input('activo') !== ''
+                ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_empleados_activar(?::BIGINT, ?::BOOLEAN, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result',
+                [
+                    (int) $id,
+                    $activo,
+                    $usuarioId ? (int) $usuarioId : null,
+                    $usuarioLogin,
+                    $usuarioNombre,
+                    $request->ip(),
+                    $request->userAgent(),
+                    (string) Str::uuid(),
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            // La funcion no levanta excepcion: contesta success=false con un
+            // codigo, y de ahi sale el estado HTTP
+            if (!($r['success'] ?? false)) {
+                sistemaLog('warning', 'activarEmpleado rechazado', ['empleado_id' => $id, 'error_code' => $r['error_code'] ?? null]);
+                return $this->errorResponse($r['message'], ($r['error_code'] ?? '') === 'NO_EXISTE' ? 404 : 500);
+            }
+
+            sistemaLog('info', 'Empleado activado/desactivado', ['empleado_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'activarEmpleado rechazado', ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'empleado_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarEmpleado', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'empleado_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del empleado', 500);
+        }
+    }
+
     public function editEmpleado(Request $request, $id)
     {
         try {

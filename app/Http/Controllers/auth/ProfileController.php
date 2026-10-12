@@ -499,6 +499,56 @@ public function addProfile(Request $request)
 
 
 
+/**
+ * Pone `activo` y nada mas.
+ *
+ * Existe aparte de editProfile porque bajar la casilla de la rejilla no tiene
+ * por que reescribir el cuadro de accesos: fn_perfiles_modificar exige la
+ * lista entera de permisos por menu, y mandarla para apagar un perfil es
+ * pedirle al navegador que reenvie cien filas y arriesgarse a pisarlas.
+ *
+ * `activo` es opcional: sin el, la funcion alterna. La pantalla si lo manda
+ * para que dos personas pulsando a la vez no acaben peleando por «lo
+ * contrario de lo que habia».
+ */
+public function activarProfile(Request $request, $id)
+{
+    $usuario = auth('api')->user();
+    try {
+        // El booleano con filter_var: "false" en texto es true a secas
+        $activo = $request->exists('activo') && $request->input('activo') !== null && $request->input('activo') !== ''
+            ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+            : null;
+
+        $result = DB::selectOne(
+            'SELECT seguridad.fn_perfiles_activar(?::BIGINT, ?::BOOLEAN, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result',
+            [
+                (int) $id,
+                $activo,
+                $usuario->id ?? null,
+                $usuario->login_user ?? null,
+                trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid(),
+            ]
+        );
+        $r = json_decode($result->result, true);
+
+        if (!($r['success'] ?? false)) {
+            sistemaLog('warning', 'activarProfile rechazado', ['profile_id' => $id, 'error_code' => $r['error_code'] ?? null]);
+            return $this->errorResponse($r['message'], ($r['error_code'] ?? '') === 'NO_EXISTE' ? 404 : 500);
+        }
+
+        sistemaLog('info', 'Perfil activado/desactivado', ['profile_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+        return $this->successResponse($r['data'], $r['message']);
+
+    } catch (Exception $e) {
+        sistemaLog('error', 'Error en activarProfile', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'profile_id' => $id]);
+        return $this->errorResponse('Ocurrió un error al cambiar el estado del perfil', 500);
+    }
+}
+
 public function editProfile(Request $request, $id)
 {
     try {

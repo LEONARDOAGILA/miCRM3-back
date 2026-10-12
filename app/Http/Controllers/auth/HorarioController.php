@@ -235,6 +235,66 @@ public function findByIdProfile($id)
     }
 
 
+    /**
+     * Pone `activo` y nada mas.
+     *
+     * Existe aparte de editHorario porque bajar la casilla de la rejilla no
+     * tiene por que revalidar el horario entero: fn_horarios_modificar
+     * reescribe tambien los dias (seguridad.dhorarios), y para apagar un
+     * horario eso es mucho ruido y mucho riesgo.
+     *
+     * `activo` es opcional: sin el, la funcion alterna. La pantalla si lo manda
+     * para que dos personas pulsando a la vez no acaben peleando por «lo
+     * contrario de lo que habia».
+     *
+     * NADIE PUEDE APAGAR SU PROPIO HORARIO. El middleware
+     * VerificarUsuarioActivo contesta 401 cuando el horario asignado esta
+     * inactivo: quien apague el suyo se queda fuera del CRM y ya no puede
+     * entrar a deshacerlo. El cerrojo esta en la funcion de la base.
+     */
+    public function activarHorario(Request $request, $id)
+    {
+        $usuario = auth('api')->user();
+        try {
+            // El booleano con filter_var: "false" en texto es true a secas
+            $activo = $request->exists('activo') && $request->input('activo') !== null && $request->input('activo') !== ''
+                ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT seguridad.fn_horarios_activar(?::BIGINT, ?::BOOLEAN, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result',
+                [
+                    (int) $id,
+                    $activo,
+                    $usuario->id ?? null,
+                    $usuario->login_user ?? null,
+                    trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+                    $request->ip(),
+                    $request->userAgent(),
+                    (string) Str::uuid(),
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                $codigo = match ($r['error_code'] ?? '') {
+                    'NO_EXISTE'  => 404,
+                    'MI_HORARIO' => 409,
+                    default      => 500,
+                };
+                sistemaLog('warning', 'activarHorario rechazado', ['horario_id' => $id, 'error_code' => $r['error_code'] ?? null]);
+                return $this->errorResponse($r['message'], $codigo);
+            }
+
+            sistemaLog('info', 'Horario activado/desactivado', ['horario_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarHorario', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'horario_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del horario', 500);
+        }
+    }
+
     public function editHorario(Request $request, $id)
     {
         try {

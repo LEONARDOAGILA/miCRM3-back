@@ -84,6 +84,7 @@ Route::group([
 
     Route::post('addBoletin', [BoletinController::class, 'addBoletin']);
     Route::post('editBoletin/{id}', [BoletinController::class, 'editBoletin']);
+    Route::post('activarBoletin/{id}', [BoletinController::class, 'activarBoletin']);   // { activo? }; sin ella, alterna
     Route::post('restaurarBoletin/{id}', [BoletinController::class, 'restaurarBoletin']);
     Route::delete('deleteBoletin/{id}', [BoletinController::class, 'deleteBoletin']);
     Route::delete('eliminarDefinitivo/{id}', [BoletinController::class, 'eliminarDefinitivo']);

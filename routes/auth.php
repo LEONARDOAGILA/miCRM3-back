@@ -64,6 +64,7 @@ Route::group([
 
     Route::post('addProfile', [ProfileController::class, 'addProfile']);
     Route::post('editProfile/{id}', [ProfileController::class, 'editProfile']);
+    Route::post('activarProfile/{id}', [ProfileController::class, 'activarProfile']);   // { activo? }; sin ella, alterna
     Route::post('editVisibilidadPerfil/{id}', [ProfileController::class, 'editVisibilidadPerfil']);
     Route::delete('deleteProfile/{id}', [ProfileController::class, 'deleteProfile']);
     Route::post('clonProfile', [ProfileController::class, 'clonProfile']);
@@ -110,6 +111,7 @@ Route::group([
     Route::get('listUsers', [UserController::class, 'listUsers'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addUser', [UserController::class, 'addUser'])->middleware(['jwt.auth', 'usuario.activo']); 
     Route::post('editUser/{id}', [UserController::class, 'editUser'])->middleware(['jwt.auth', 'usuario.activo']); 
+    Route::post('activarUser/{id}', [UserController::class, 'activarUser'])->middleware(['jwt.auth', 'usuario.activo']);   // { activo? }; sin ella, alterna
     Route::delete('deleteUser/{id}', [UserController::class, 'deleteUser'])->middleware(['jwt.auth', 'usuario.activo']); 
     Route::post('changePassword/{id}', [UserController::class, 'changePassword'])->middleware(['jwt.auth', 'usuario.activo']); 
     Route::post('changePasswordLogin/{id}', [UserController::class, 'changePasswordLogin'])->middleware(['jwt.auth', 'usuario.activo']); 
@@ -151,6 +153,7 @@ Route::group([
     Route::get('/getHorario/{id}', [HorarioController::class, 'getHorario']);
     Route::post('/addHorario', [HorarioController::class, 'addHorario']);
     Route::post('/editHorario/{id}', [HorarioController::class, 'editHorario']);
+    Route::post('/activarHorario/{id}', [HorarioController::class, 'activarHorario']);   // { activo? }; sin ella, alterna
     Route::delete('/deleteHorario/{id}', [HorarioController::class, 'deleteHorario']);
 });
 

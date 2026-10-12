@@ -221,6 +221,63 @@ class CargoController extends Controller
         }
     }
 
+    /**
+     * Pone `activo` y nada mas.
+     *
+     * Existe aparte de editCargo porque bajar la casilla de la rejilla no
+     * tiene por que revalidar la ficha entera: rh.fn_cargos_modificar vuelve a
+     * pasar por todas sus reglas, y un registro que hoy no las cumpliria
+     * —cargado antes de que existieran— no se podria desactivar hasta
+     * arreglarle todo lo demas.
+     *
+     * `activo` es opcional: sin el, la funcion alterna. La pantalla si lo manda
+     * para que dos personas pulsando a la vez no acaben peleando por «lo
+     * contrario de lo que habia».
+     */
+    public function activarCargo(Request $request, $id)
+    {
+        [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
+        try {
+            // El booleano con filter_var: "false" en texto es true a secas
+            $activo = $request->exists('activo') && $request->input('activo') !== null && $request->input('activo') !== ''
+                ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_cargos_activar(?::BIGINT, ?::BOOLEAN, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result',
+                [
+                    (int) $id,
+                    $activo,
+                    $usuarioId ? (int) $usuarioId : null,
+                    $usuarioLogin,
+                    $usuarioNombre,
+                    $request->ip(),
+                    $request->userAgent(),
+                    (string) Str::uuid(),
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            // La funcion no levanta excepcion: contesta success=false con un
+            // codigo, y de ahi sale el estado HTTP
+            if (!($r['success'] ?? false)) {
+                sistemaLog('warning', 'activarCargo rechazado', ['cargo_id' => $id, 'error_code' => $r['error_code'] ?? null]);
+                return $this->errorResponse($r['message'], ($r['error_code'] ?? '') === 'NO_EXISTE' ? 404 : 500);
+            }
+
+            sistemaLog('info', 'Cargo activado/desactivado', ['cargo_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'activarCargo rechazado', ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'cargo_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarCargo', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cargo_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del cargo', 500);
+        }
+    }
+
     public function editCargo(Request $request, $id)
     {
         [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
