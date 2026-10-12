@@ -206,14 +206,18 @@ class PermisoArchivoController extends Controller
         }
     }
 
-    /** Filas de permisos con los datos del usuario (login, nombre, tipo, activo), como arrays. */
+    /** Filas de permisos con los datos del usuario (login, nombre, si administra, activo), como arrays. */
     private function filasConUsuario($consulta) {
         return $consulta
             ->join('seguridad.users as u', 'u.id', '=', 'seguridad.permisos_archivos.user_id')
+            // El grupo dice si administra; antes se mandaba u.type_user y la
+            // pantalla decidía con 1 y 2, que es de antes de que hubiera grupos
+            ->leftJoin('seguridad.grupos as g', 'g.id', '=', 'u.grupo_id')
             ->orderBy('u.name')->orderBy('u.surname')
             ->get([
                 'seguridad.permisos_archivos.*',
-                'u.login_user', 'u.name', 'u.surname', 'u.type_user', 'u.isactive', 'u.avatar',
+                'u.login_user', 'u.name', 'u.surname', 'u.isactive', 'u.avatar',
+                DB::raw('COALESCE(g.es_administrador, false) AS es_administrador'),
             ])
             ->map(function ($f) {
                 $a = $f->toArray();
@@ -315,10 +319,12 @@ class PermisoArchivoController extends Controller
     public function usuarios(Request $request){
         try {
             $q = trim((string) $request->input('search', ''));
-            $consulta = DB::table('seguridad.users')
-                ->select('id', 'login_user', 'name', 'surname', 'type_user', 'isactive', 'avatar')
-                ->where('isactive', true)
-                ->whereNull('deleted_at');
+            $consulta = DB::table('seguridad.users as u')
+                ->leftJoin('seguridad.grupos as g', 'g.id', '=', 'u.grupo_id')
+                ->select('u.id', 'u.login_user', 'u.name', 'u.surname', 'u.isactive', 'u.avatar',
+                         DB::raw('COALESCE(g.es_administrador, false) AS es_administrador'))
+                ->where('u.isactive', true)
+                ->whereNull('u.deleted_at');
             if ($q !== '') {
                 $consulta->where(function ($w) use ($q) {
                     $w->where('login_user', 'ILIKE', "%{$q}%")
@@ -459,6 +465,30 @@ class PermisoArchivoController extends Controller
             $ordenar($raices);
 
             return $this->successResponse($raices, 'La solicitud ha tenido éxito');
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Si quien pregunta administra el gestor de archivos.
+     *
+     * Lo necesita «Mis archivos» para enseñar u ocultar lo de administrador
+     * (nueva raíz, almacenamiento, auditoría) sin tener que adivinarlo. Antes
+     * la pantalla lo deducía de users.type_user, que ni llega en el payload
+     * del login —así que nunca se cumplía— y que además ya no decide nada:
+     * manda el grupo. Es una llamada y no un campo más en el login para no
+     * tocar la autenticación por una pantalla.
+     *
+     * La respuesta es informativa: el permiso de verdad lo comprueba el back
+     * en cada operación (ver PermisosDeArchivo).
+     */
+    public function soyAdminDeArchivos(){
+        try {
+            return $this->successResponse(
+                ['es_administrador' => $this->esAdminDeArchivos()],
+                'La solicitud ha tenido éxito'
+            );
         } catch (Exception $e) {
             return $this->errorResponse($e->getMessage(), 500);
         }

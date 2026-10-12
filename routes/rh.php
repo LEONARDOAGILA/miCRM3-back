@@ -22,6 +22,7 @@ Route::group([
     Route::get('findByIdCargo/{id}', [CargoController::class, 'findByIdCargo']);
     Route::post('addCargo', [CargoController::class, 'addCargo']);
     Route::post('editCargo/{id}', [CargoController::class, 'editCargo']);
+    Route::post('activarCargo/{id}', [CargoController::class, 'activarCargo']);   // { activo? }; sin ella, alterna
     Route::delete('deleteCargo/{id}', [CargoController::class, 'deleteCargo']);
 });
 
@@ -35,6 +36,7 @@ Route::group([
     Route::get('findByIdDepartamento/{id}', [DepartamentoController::class, 'findByIdDepartamento']);
     Route::post('addDepartamento', [DepartamentoController::class, 'addDepartamento']);
     Route::post('editDepartamento/{id}', [DepartamentoController::class, 'editDepartamento']);
+    Route::post('activarDepartamento/{id}', [DepartamentoController::class, 'activarDepartamento']);   // { activo? }; sin ella, alterna
     Route::delete('deleteDepartamento/{id}', [DepartamentoController::class, 'deleteDepartamento']);
 });
 
@@ -47,6 +49,7 @@ Route::group([
     Route::get('findByIdEmpleado/{id}', [EmpleadoController::class, 'findByIdEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addEmpleado', [EmpleadoController::class, 'addEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('editEmpleado/{id}', [EmpleadoController::class, 'editEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::post('activarEmpleado/{id}', [EmpleadoController::class, 'activarEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);   // { activo? }; sin ella, alterna
     Route::delete('deleteEmpleado/{id}', [EmpleadoController::class, 'deleteEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addImagen', [EmpleadoController::class, 'addImagen'])->middleware(['jwt.auth', 'usuario.activo']);            // { EmpleadoId, imagen_file }
     Route::get('listContactos/{id}', [EmpleadoController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // contactos de emergencia

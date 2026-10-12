@@ -283,9 +283,14 @@ class NotaClienteController extends Controller
             }
             $busca = trim((string) $request->query('search', '')) ?: null;
 
+            // Quién pregunta, que es lo que decide qué notas de ese cliente se
+            // le devuelven. No es opcional: la función falla cerrado y sin
+            // usuario no devuelve ninguna.
+            $quien = auth('api')->id();
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_notas_clientes_listar(?::BIGINT, ?::VARCHAR) as result',
-                [$clienteId, $busca]
+                'SELECT ventas.fn_notas_clientes_listar(?::BIGINT, ?::VARCHAR, ?::BIGINT) as result',
+                [$clienteId, $busca, $quien]
             );
             $r = json_decode($result->result, true);
             return $this->successResponse($r['data'], $r['message']);
@@ -444,7 +449,7 @@ class NotaClienteController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_archivos_clientes_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, '
-                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     null,
                     $clienteId,
@@ -458,6 +463,8 @@ class NotaClienteController extends Controller
                     null,
                     true,
                     'nota',
+                    // Sin gestion: una imagen de nota no cuelga de ninguna
+                    null,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -547,7 +554,7 @@ class NotaClienteController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_archivos_clientes_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, '
-                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BIGINT, ?::INTEGER, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     null,
                     $clienteId,
@@ -561,6 +568,8 @@ class NotaClienteController extends Controller
                     null,
                     true,
                     'nota',
+                    // Sin gestion: una imagen de nota no cuelga de ninguna
+                    null,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);

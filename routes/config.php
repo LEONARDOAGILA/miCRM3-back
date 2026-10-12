@@ -42,6 +42,7 @@ Route::group([
     // Usuario final
     Route::get('misArchivos', [PermisoArchivoController::class, 'misArchivos']);                     // árbol con lo que puede ver
     Route::get('miPermisoArchivo/{id}', [PermisoArchivoController::class, 'miPermiso']);
+    Route::get('soyAdminDeArchivos', [PermisoArchivoController::class, 'soyAdminDeArchivos']);        // si su grupo administra
     Route::post('abrirArchivo/{id}', [PermisoArchivoController::class, 'abrir']);                    // autoriza ejecutar + registra acceso
 
     // Papelera de reciclaje (borrado lógico)
@@ -83,6 +84,7 @@ Route::group([
 
     Route::post('addBoletin', [BoletinController::class, 'addBoletin']);
     Route::post('editBoletin/{id}', [BoletinController::class, 'editBoletin']);
+    Route::post('activarBoletin/{id}', [BoletinController::class, 'activarBoletin']);   // { activo? }; sin ella, alterna
     Route::post('restaurarBoletin/{id}', [BoletinController::class, 'restaurarBoletin']);
     Route::delete('deleteBoletin/{id}', [BoletinController::class, 'deleteBoletin']);
     Route::delete('eliminarDefinitivo/{id}', [BoletinController::class, 'eliminarDefinitivo']);

@@ -211,6 +211,10 @@ class CatalogoGestionController extends Controller
                 'nombre'  => 'required|string|min:3|max:200',
                 'orden'   => 'nullable|integer|min:0|max:9999',
                 'activo'  => 'nullable|boolean',
+                // Lo que se le manda al cliente con este asunto: texto suelto
+                // en WhatsApp, HTML en un correo. Sin tope de largo porque un
+                // correo con formato no lo tiene.
+                'mensaje' => 'nullable|string|max:100000',
             ], [
                 'tipo_id.required' => 'Debe indicar a qué tipo pertenece el asunto',
                 'nombre.required'  => 'El asunto es obligatorio',
@@ -222,7 +226,7 @@ class CatalogoGestionController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_asuntos_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::INTEGER, ?::BOOLEAN, '
+                'SELECT ventas.fn_gestiones_asuntos_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::INTEGER, ?::BOOLEAN, ?::TEXT, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $id ? (int) $id : null,
@@ -230,6 +234,9 @@ class CatalogoGestionController extends Controller
                     $d['nombre'],
                     isset($d['orden']) ? (int) $d['orden'] : 100,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    // Si no viene, el mensaje se queda como estaba: la pantalla
+                    // que sólo renombra no tiene por qué reenviarlo entero.
+                    array_key_exists('mensaje', $d) ? (string) $d['mensaje'] : null,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);

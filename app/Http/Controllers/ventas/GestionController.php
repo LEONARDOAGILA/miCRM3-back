@@ -21,7 +21,7 @@ use App\Http\Resources\ApiResponder;
  * se valida la entrada, se llama a la función con el contexto del usuario
  * autenticado y se traduce la respuesta.
  *
- *   GET    ventas/gestion/allGestiones?cliente_id&page&per_page&search&tipo&estado&desde&hasta
+ *   GET    ventas/gestion/allGestiones?cliente_id&page&per_page&search&tipo&estado&desde&hasta&resultado&responsable_id&filtros
  *   GET    ventas/gestion/findByIdGestion/{id}
  *   POST   ventas/gestion/addGestion
  *   POST   ventas/gestion/editGestion/{id}
@@ -34,6 +34,10 @@ use App\Http\Resources\ApiResponder;
  */
 class GestionController extends Controller
 {
+    // El traductor del modelo de filtros de ag-Grid, compartido con las
+    // demás pantallas que paginan en el servidor
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
     use ApiResponder;
 
     /** SQLSTATE de las reglas de negocio de ventas.fn_gestiones_* → código HTTP. */
@@ -41,6 +45,9 @@ class GestionController extends Controller
         'P0001' => 422,   // falta un dato obligatorio
         'P0013' => 404,   // el cliente o la gestión no existe
         'P0016' => 422,   // el usuario no existe
+        'P0017' => 422,   // el papel (vendedor, cobrador…) no existe
+        'P0018' => 422,   // no se eligió ningún cliente
+        'P0019' => 422,   // se pasó del tope de clientes por tanda
         'P0021' => 409,   // la gestión ya no está pendiente
         'P0022' => 422,   // la fecha no es coherente
     ];
@@ -73,29 +80,119 @@ class GestionController extends Controller
         ];
     }
 
-    /**
-     * Si quien pregunta es administrador.
-     *
-     * Manda `es_administrador` del GRUPO, que es la misma señal con la que se
-     * recortan la lista de clientes, la agenda y el tablero. No se mira
-     * users.type_user: ése lo pone quien crea el usuario y puede quedarse
-     * atrás si luego se le cambia de grupo. La pantalla sí lo usa, pero para
-     * decidir qué enseña, que es otra cosa.
-     */
-    private function esAdministrador(): bool
-    {
-        $id = auth('api')->user()->id ?? null;
-        if (!$id) { return false; }
+    /** Los papeles con los que se atiende a un cliente. */
+    private const ROLES_RESPONSABLE = ['VENDEDOR', 'COBRADOR', 'ASISTENTE', 'POSTVENTA'];
 
+    /**
+     * Qué papeles puede repartir quien pregunta.
+     *
+     * Sale del cuadro «Qué ve dentro de un cliente» de su perfil, papel a
+     * papel. Un administrador los recibe los cuatro sin que nadie se lo
+     * configure, porque fn_alcance le contesta TODO sin mirar la tabla.
+     *
+     * Vacío significa que esa persona no tiene nada que hacer en la pantalla
+     * de reparto.
+     */
+    private function papelesQueReparte(): array
+    {
         $fila = DB::selectOne(
-            'SELECT COALESCE(g.es_administrador, false) AS admin
-               FROM seguridad.users u
-               LEFT JOIN seguridad.grupos g ON g.id = u.grupo_id
-              WHERE u.id = ?::BIGINT',
-            [(int) $id]
+            'SELECT seguridad.fn_papeles_que_reparte(?::BIGINT) AS papeles',
+            [auth('api')->id()]
         );
-        return (bool) ($fila->admin ?? false);
+
+        // Postgres devuelve el array como '{VENDEDOR,COBRADOR}'
+        $crudo = trim((string) ($fila->papeles ?? ''), '{}');
+        return $crudo === '' ? [] : explode(',', $crudo);
     }
+
+    /** Si puede repartir ESE papel. */
+    private function puedeRepartir(string $rol): bool
+    {
+        $fila = DB::selectOne(
+            'SELECT seguridad.fn_puede_repartir(?::BIGINT, ?::VARCHAR) AS puede',
+            [auth('api')->id(), strtoupper($rol)]
+        );
+        return (bool) ($fila->puede ?? false);
+    }
+
+    /**
+     * Por qué columnas deja filtrar la pantalla de reparto, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     */
+    private const COLUMNAS_FILTRABLES_REPARTO = [
+        'id'                    => 'numero',
+        'pendientes'            => 'numero',
+        'nombre_completo'       => 'texto',
+        'numero_identificacion' => 'texto',
+        'provincia'             => 'texto',
+        'canton'                => 'texto',
+        'parroquia'             => 'texto',
+        'coordenadas'           => 'texto',
+        'estado'                => 'texto',
+        'vendedor_nombre'       => 'texto',
+        'cobrador_nombre'       => 'texto',
+        'asistente_nombre'      => 'texto',
+        'postventa_nombre'      => 'texto',
+    ];
+
+    /**
+     * Por qué columnas dejan filtrar las rejillas de la ficha del cliente
+     * —«Historial» y «Pendientes»—, y de qué tipo.
+     *
+     * Las dos pestañas salen de allGestiones, así que la lista es la unión de
+     * sus dos rejillas: lo que sólo está en una (prioridad, telefono) no lo
+     * pide la otra y aquí no estorba.
+     *
+     * Tiene que cuadrar con lo que escribe ventas.fn_gestiones_listar_paginado:
+     * ofrecer aquí una columna que la función no mira sería prometer un filtro
+     * que no hace nada.
+     *
+     * `cuando` no es un campo del dato: es la columna que enseña la fecha
+     * realizada y, si no la hay, la programada. La rejilla la manda con ese
+     * nombre porque se le puso ese colId.
+     */
+    private const COLUMNAS_FILTRABLES_GESTIONES = [
+        'id'                    => 'numero',
+        'duracion_minutos'      => 'numero',
+        'responsable_nombre'    => 'texto',
+        'estado'                => 'texto',
+        'tipo'                  => 'texto',
+        'cuando'                => 'texto',
+        'fecha_programada'      => 'texto',
+        'asunto'                => 'texto',
+        'resultado'             => 'texto',
+        'prioridad'             => 'texto',
+        'telefono'              => 'texto',
+        'contacto_nombre'       => 'texto',
+        'nota'                  => 'texto',
+        'registrado_por_nombre' => 'texto',
+    ];
+
+    /**
+     * Por qué columnas deja filtrar «Lo que toca hacer», y de qué tipo.
+     *
+     * Es otra rejilla y otra consulta que la de la ficha del cliente: aquí
+     * salen las pendientes de TODOS los clientes, así que tiene columna de
+     * cliente y no tiene ni estado ni resultado (son todas PENDIENTE).
+     *
+     * Tiene que cuadrar con ventas.fn_gestiones_agenda_paginado, que es quien
+     * lo aplica.
+     */
+    private const COLUMNAS_FILTRABLES_AGENDA = [
+        'id'                 => 'numero',
+        'tipo'               => 'texto',
+        'fecha_programada'   => 'texto',
+        'cliente_nombre'     => 'texto',
+        'asunto'             => 'texto',
+        'prioridad'          => 'texto',
+        'telefono'           => 'texto',
+        'responsable_nombre' => 'texto',
+    ];
 
     /** Los mismos marcadores de auditoría que usan las demás funciones. */
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
@@ -142,7 +239,10 @@ class GestionController extends Controller
             // ser opcional porque lo rellena la función con el nombre del asunto.
             'asunto_id'         => 'required|integer|exists:pgsql.ventas.gestiones_asuntos,id',
             'asunto'            => 'nullable|string|min:3|max:200',
-            'nota'              => 'nullable|string|max:4000',
+            // 100000 y no 4000: en «Qué se habló» cabe ahora un correo con
+            // formato y una conversación de WhatsApp importada, y los dos pasan
+            // de 4000 sin esfuerzo. La columna es text: el tope era sólo de aquí.
+            'nota'              => 'nullable|string|max:100000',
             'usuario_id'        => 'nullable|integer|exists:pgsql.seguridad.users,id',
             'contacto_id'       => 'nullable|integer',
             'telefono'          => 'nullable|string|max:20',
@@ -151,7 +251,7 @@ class GestionController extends Controller
             'duracion_minutos'  => 'nullable|integer|min:0|max:1440',
             'resultado'         => 'nullable|string|in:CONTACTADO,NO_CONTESTA,BUZON,NUMERO_ERRADO,VOLVER_A_LLAMAR,INTERESADO,NO_INTERESADO,COTIZACION,VENTA,RECLAMO,OTRO',
             // Cómo la registró el vendedor; queda guardado para los reportes
-            'modo_registro'     => 'nullable|string|in:AHORA,YA_HECHA,PROGRAMADA',
+            'modo_registro'     => 'nullable|string|in:AHORA,YA_HECHA,PROGRAMADA,IMPORTADA',
         ];
     }
 
@@ -231,13 +331,29 @@ class GestionController extends Controller
             $estado    = $request->filled('estado') ? $request->input('estado') : null;
             $desde     = $request->filled('desde')  ? $request->input('desde')  : null;
             $hasta     = $request->filled('hasta')  ? $request->input('hasta')  : null;
-            // Los dos filtros del historial: cómo terminó y quién la registró
-            $resultado  = $request->filled('resultado')  ? $request->input('resultado')  : null;
-            $creadoPor  = $request->filled('creado_por') ? $request->input('creado_por') : null;
+            // Los dos filtros del historial: cómo terminó y de quién es.
+            //
+            // El de la persona filtra por RESPONSABLE (usuario_id) y no por
+            // quién la registró: desde que se puede crear una gestión para
+            // otro, lo que se busca es a quién le toca. La columna
+            // «Registrado por» se queda en la rejilla, pero no se filtra.
+            $resultado      = $request->filled('resultado')      ? $request->input('resultado') : null;
+            $responsableId  = $request->filled('responsable_id') ? (int) $request->input('responsable_id') : null;
+
+            // Quién pregunta, que es lo que decide qué gestiones del cliente se le
+            // devuelven (ver seguridad.fn_usuarios_visibles). No es opcional: la
+            // función falla cerrado y sin usuario no devuelve ninguna.
+            $quien = auth('api')->id();
+
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no en
+            // el navegador: las dos pestañas piden sus filas al servidor, así
+            // que ag-Grid sólo tiene las de la página y filtrando por su cuenta
+            // buscaría dentro de ésas.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_GESTIONES);
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::VARCHAR) as result',
-                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $creadoPor]
+                'SELECT ventas.fn_gestiones_listar_paginado(?::BIGINT, ?::INTEGER, ?::INTEGER, ?::TEXT, ?::VARCHAR, ?::VARCHAR, ?::DATE, ?::DATE, ?::VARCHAR, ?::BIGINT, ?::BIGINT, ?::JSONB) as result',
+                [$clienteId, $page, $perPage, $search, $tipo, $estado, $desde, $hasta, $resultado, $responsableId, $quien, json_encode((object) $filtros)]
             );
             $resultado = json_decode($result->result, true);
 
@@ -254,6 +370,25 @@ class GestionController extends Controller
     public function findByIdGestion($id)
     {
         try {
+            // La puerta estrecha: por aquí entran «ver» y «editar» con un id a
+            // mano, y sin esto una gestión tapada en la rejilla se seguía
+            // abriendo escribiendo su número en la url. Se pregunta antes de
+            // leerla, y la función ya sabe que una importada obedece al
+            // interruptor de WhatsApp.
+            [$quien] = $this->contextoUsuario();
+            $puede = DB::selectOne(
+                'SELECT ventas.fn_gestion_visible_para(?::BIGINT, ?::BIGINT) AS si',
+                [(int) $id, $quien]
+            );
+            if (!($puede->si ?? false)) {
+                sistemaLog('warning', 'Intento de abrir una gestión fuera de su visibilidad', [
+                    'gestion_id' => $id, 'usuario_id' => $quien,
+                ]);
+                // Un mensaje para los dos casos a propósito: si dijera «no
+                // existe» cuando no existe, probando ids se sabría cuáles hay
+                return $this->errorResponse('Esta gestión no existe o no está a su alcance', 403);
+            }
+
             $result = DB::selectOne('SELECT ventas.fn_gestiones_obtener(?::BIGINT) as result', [(int) $id]);
             $resultado = json_decode($result->result, true);
             if (!$resultado['success']) {
@@ -301,9 +436,15 @@ class GestionController extends Controller
             // jerarquía.
             [$solicitante] = $this->contextoUsuario();
 
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no en
+            // el navegador: la agenda pagina en el servidor, así que ag-Grid
+            // sólo tiene quince filas y filtrando por su cuenta buscaría
+            // dentro de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_AGENDA);
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER, ?::BIGINT) as result',
-                [$usuarioId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage, $solicitante]
+                'SELECT ventas.fn_gestiones_agenda_paginado(?::BIGINT, ?::VARCHAR, ?::DATE, ?::DATE, ?::BOOLEAN, ?::TEXT, ?::INTEGER, ?::INTEGER, ?::BIGINT, ?::JSONB) as result',
+                [$usuarioId, $login, $desde, $hasta, $vencidas, $search, $page, $perPage, $solicitante, json_encode((object) $filtros)]
             );
             $resultado = json_decode($result->result, true);
 
@@ -357,13 +498,50 @@ class GestionController extends Controller
     public function resumen($clienteId)
     {
         try {
-            $result = DB::selectOne('SELECT ventas.fn_gestiones_resumen(?::BIGINT) as result', [(int) $clienteId]);
+            // Quién pregunta: las cifras son de lo que esa persona puede ver, y
+            // «última gestión» trae la gestión entera, nota incluida
+            [$quien] = $this->contextoUsuario();
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_resumen(?::BIGINT, ?::BIGINT) as result',
+                [(int) $clienteId, $quien]
+            );
             $resultado = json_decode($result->result, true);
             return $resultado['success']
                 ? $this->successResponse($resultado['data'], $resultado['message'])
                 : $this->errorResponse($resultado['message'], 500);
         } catch (Exception $e) {
             sistemaLog('error', 'Error en resumen de gestiones', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Las conversaciones que se trajeron de un fichero.
+     *
+     * Son gestiones normales con modo_registro = IMPORTADA. Van por su propia
+     * ruta y no por allGestiones con un filtro más porque la pestaña de
+     * WhatsApp las enseña TODAS y sin paginar: son unas pocas por cliente, y
+     * buscarlas dentro del historial paginado obligaría a pedir páginas hasta
+     * dar con ellas.
+     */
+    public function importadas($clienteId)
+    {
+        try {
+            // Quién pregunta: estas obedecen al dato WHATSAPP, no al de las
+            // gestiones normales
+            [$quien] = $this->contextoUsuario();
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_importadas(?::BIGINT, ?::BIGINT) as result',
+                [(int) $clienteId, $quien]
+            );
+            $resultado = json_decode($result->result, true);
+            return $resultado['success']
+                ? $this->successResponse($resultado['data'], $resultado['message'])
+                : $this->errorResponse($resultado['message'], 500);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en importadas', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
             return $this->errorResponse($e->getMessage(), 500);
         }
     }
@@ -425,6 +603,62 @@ class GestionController extends Controller
     // CREAR / MODIFICAR / CERRAR / ELIMINAR
     // ================================================================
 
+    /**
+     * A qué usuarios puede quien pregunta dejar una gestión a cargo.
+     *
+     * ?cliente_id= es importante: sin él la lista es sólo su jerarquía, y con
+     * él entran además los responsables de ese cliente —que es lo que permite
+     * pasarle una cobranza al cobrador del cliente aunque no esté por debajo—.
+     *
+     * Siempre trae al propio usuario primero: lo normal es quedarse la gestión.
+     */
+    public function asignables(Request $request)
+    {
+        try {
+            [$quien] = $this->contextoUsuario();
+            $clienteId = $request->filled('cliente_id') ? (int) $request->input('cliente_id') : null;
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_gestiones_asignables(?::BIGINT, ?::BIGINT) as result',
+                [$quien, $clienteId]
+            );
+            $r = json_decode($result->result, true);
+
+            return ($r['success'] ?? false)
+                ? $this->successResponse($r['data'], $r['message'])
+                : $this->errorResponse($r['message'] ?? 'No se pudo leer la lista', 400);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en asignables', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al obtener los usuarios asignables', 500);
+        }
+    }
+
+    /**
+     * Devuelve la respuesta de rechazo si NO puede asignarle a ese usuario, o
+     * null si puede. La regla vive en la base, en fn_gestion_puede_asignar.
+     */
+    private function vetoDeResponsable(?int $responsableId, int $clienteId)
+    {
+        if (!$responsableId) { return null; }   // sin elegir: la función pone a quien la crea
+
+        [$quien] = $this->contextoUsuario();
+        $puede = DB::selectOne(
+            'SELECT ventas.fn_gestion_puede_asignar(?::BIGINT, ?::BIGINT, ?::BIGINT) AS si',
+            [$quien, $responsableId, $clienteId ?: null]
+        );
+
+        if ($puede->si ?? false) { return null; }
+
+        sistemaLog('warning', 'Intento de asignar una gestión a un usuario fuera de su alcance', [
+            'usuario_id' => $quien, 'responsable_id' => $responsableId, 'cliente_id' => $clienteId,
+        ]);
+        return $this->errorResponse(
+            'No puede dejar esta gestión a cargo de ese usuario: elija alguien de su equipo o un responsable del cliente.',
+            422
+        );
+    }
+
     public function addGestion(Request $request)
     {
         try {
@@ -433,6 +667,16 @@ class GestionController extends Controller
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
             $d = $validator->validated();
+
+            // ¿Puede dejarla a cargo de ese otro? La regla es la de
+            // ventas.fn_gestiones_asignables —su jerarquía, los responsables
+            // del cliente y él mismo—, y se comprueba aquí porque una gestión
+            // asignada entra en la agenda de otra persona: si la comprobación
+            // viviera sólo en la pantalla, una petición a mano le metería
+            // trabajo a cualquiera.
+            if ($error = $this->vetoDeResponsable($d['usuario_id'] ?? null, (int) $d['cliente_id'])) {
+                return $error;
+            }
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_crear(?::BIGINT, ' . self::CASTS_DATOS . ', ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
@@ -460,6 +704,13 @@ class GestionController extends Controller
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
             $d = $validator->validated();
+
+            // El cliente sale de la gestión y no del cuerpo: al modificar no
+            // se manda, y es el que decide a quién se le puede pasar
+            $cliente = DB::selectOne('SELECT cliente_id FROM ventas.gestiones WHERE id = ?', [(int) $id]);
+            if ($error = $this->vetoDeResponsable($d['usuario_id'] ?? null, (int) ($cliente->cliente_id ?? 0))) {
+                return $error;
+            }
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_modificar(?::BIGINT, ' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
@@ -491,24 +742,48 @@ class GestionController extends Controller
             $datos = $this->datosDe($request);
             $validator = Validator::make($datos, [
                 'resultado'           => 'required|string|in:CONTACTADO,NO_CONTESTA,BUZON,NUMERO_ERRADO,VOLVER_A_LLAMAR,INTERESADO,NO_INTERESADO,COTIZACION,VENTA,RECLAMO,OTRO',
-                'nota'                => 'nullable|string|max:4000',
+                'nota'                => 'nullable|string|max:100000',
                 'duracion_minutos'    => 'nullable|integer|min:0|max:1440',
                 'fecha_realizada'     => 'nullable|date',
                 'siguiente'           => 'nullable|array',
                 'siguiente.fecha'     => 'required_with:siguiente|date',
                 'siguiente.asunto'    => 'nullable|string|max:200',
-                'siguiente.tipo'      => 'nullable|string|in:LLAMADA,WHATSAPP,CORREO,VISITA,REUNION,OTRO',
+                // Del catálogo, igual que al registrar: el seguimiento es una
+                // gestión como las demás y tiene que poder agruparse por
+                // asunto. El texto se queda para las pantallas que aún no lo
+                // mandan, y la función de base ya comprueba que el asunto
+                // pertenezca al tipo del seguimiento.
+                'siguiente.asunto_id' => 'nullable|integer|exists:pgsql.ventas.gestiones_asuntos,id',
+                // El tipo también sale del catálogo y no de una lista escrita
+                // aquí: con la lista a fuego, un tipo nuevo no se podía usar
+                // en un seguimiento.
+                'siguiente.tipo'      => 'nullable|string|exists:pgsql.ventas.gestiones_tipos,codigo',
                 'siguiente.prioridad' => 'nullable|string|in:ALTA,MEDIA,BAJA',
                 'siguiente.nota'      => 'nullable|string|max:4000',
+                // A quién le toca el seguimiento. Sin esto lo heredaba a la
+                // fuerza de la gestión que se cierra.
+                'siguiente.usuario_id' => 'nullable|integer|exists:pgsql.seguridad.users,id',
             ], [
                 'resultado.required'       => 'Debe indicar cómo terminó la gestión',
                 'resultado.in'             => 'El resultado no es válido',
                 'siguiente.fecha.required_with' => 'El seguimiento necesita fecha y hora',
+                'siguiente.tipo.exists'    => 'El tipo de gestión no está en el catálogo',
+                'siguiente.asunto_id.exists' => 'El asunto elegido ya no está en el catálogo',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
             $d = $validator->validated();
+
+            // ¿Puede dejar el seguimiento a cargo de ese otro? La misma regla
+            // que al registrar (ventas.fn_gestiones_asignables), y por lo
+            // mismo: la gestión nueva entra en la agenda de otra persona.
+            $cliente = DB::selectOne('SELECT cliente_id FROM ventas.gestiones WHERE id = ?', [(int) $id]);
+            if ($error = $this->vetoDeResponsable(
+                    isset($d['siguiente']['usuario_id']) ? (int) $d['siguiente']['usuario_id'] : null,
+                    (int) ($cliente->cliente_id ?? 0))) {
+                return $error;
+            }
 
             $result = DB::selectOne(
                 'SELECT ventas.fn_gestiones_cerrar(?::BIGINT, ?::VARCHAR, ?::TEXT, ?::INTEGER, ?::TIMESTAMPTZ, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
@@ -556,8 +831,14 @@ class GestionController extends Controller
             // Y se borran después, con la fila ya ida: al revés, si el borrado
             // fallara, la gestión seguiría enseñando adjuntos que ya no están.
             foreach ($adjuntos as $a) {
-                $ruta = storage_path('app/public/img/clientes/' . $a->archivo);
-                if ($a->archivo && file_exists($ruta)) { @unlink($ruta); }
+                if (!$a->archivo) { continue; }
+                // En las dos carpetas: los de ahora van a img/clientes/gestiones,
+                // y los subidos antes de que esa carpeta existiera siguen en la
+                // del cliente (ver ArchivoClienteController::rutaDeFichero).
+                foreach (['img/clientes/gestiones/', 'img/clientes/'] as $carpeta) {
+                    $ruta = storage_path('app/public/' . $carpeta . $a->archivo);
+                    if (file_exists($ruta)) { @unlink($ruta); break; }
+                }
             }
             $resultado = json_decode($result->result, true);
             sistemaLog('info', 'Gestión eliminada', ['gestion_id' => $id]);
@@ -588,15 +869,19 @@ class GestionController extends Controller
     public function reasignar(Request $request, $clienteId)
     {
         try {
-            // Repartir clientes es cosa de administradores. En la pantalla la
-            // pestaña de Asignación ni se enseña al resto, pero eso es lo que
-            // se ve: la ruta sigue existiendo y aquí es donde se cierra.
-            if (!$this->esAdministrador()) {
-                sistemaLog('warning', 'Reasignación rechazada: no es administrador', [
+            // Repartir un cliente es el mismo permiso que repartir mil, así
+            // que se mide con la misma vara: el papel que se va a cambiar.
+            // Antes aquí ponía «es administrador» y en la pantalla de reparto
+            // otra cosa; dos varas para la misma decisión acaban separándose.
+            $rolPedido = strtoupper((string) ($this->datosDe($request)['rol'] ?? 'VENDEDOR'));
+
+            if (!in_array($rolPedido, self::ROLES_RESPONSABLE, true) || !$this->puedeRepartir($rolPedido)) {
+                sistemaLog('warning', 'Reasignación rechazada: no puede repartir ese papel', [
                     'cliente_id' => $clienteId,
+                    'rol'        => $rolPedido,
                     'usuario'    => $request->user()->login_user ?? null,
                 ]);
-                return $this->errorResponse('Sólo un administrador puede cambiar quién atiende al cliente', 403);
+                return $this->errorResponse('Su perfil no puede cambiar quién atiende al cliente como ' . ucfirst(strtolower($rolPedido)), 403);
             }
 
             $validator = Validator::make($this->datosDe($request), [
@@ -652,10 +937,35 @@ class GestionController extends Controller
         }
     }
 
-    /** Por qué manos ha pasado el cliente, en cualquiera de los papeles. */
+    /**
+     * Por qué manos ha pasado el cliente, en cualquiera de los papeles.
+     *
+     * Es el historial de responsables, y lo decide el alcance ASIGNACION del
+     * perfil —el quinto del cuadro «Qué ve dentro de un cliente»—, no el hecho
+     * de ser administrador.
+     *
+     * SE COMPRUEBA AQUÍ. Hasta ahora la pestaña se escondía en Angular y esta
+     * ruta no preguntaba nada: con la sesión de cualquier usuario devolvía el
+     * historial entero. Esconder una pestaña no cierra una ruta.
+     *
+     * Para este dato los alcances «de quién» no significan nada: se ve o no se
+     * ve. Por eso se compara contra NINGUNO y no contra TODO —si alguien deja
+     * un A_CARGO puesto a mano, se trata como que sí la ve, que es lo que la
+     * pantalla del perfil da a entender—.
+     */
     public function asignaciones($clienteId)
     {
         try {
+            $usuario = auth('api')->user();
+            $alcance = DB::selectOne(
+                'SELECT seguridad.fn_alcance(?::BIGINT, ?) AS alcance',
+                [$usuario->id ?? null, 'ASIGNACION']
+            );
+
+            if (($alcance->alcance ?? 'NINGUNO') === 'NINGUNO') {
+                return $this->errorResponse('Su perfil no tiene acceso a las asignaciones del cliente', 403);
+            }
+
             $result = DB::selectOne('SELECT ventas.fn_asignaciones_listar(?::BIGINT) as result', [(int) $clienteId]);
             $resultado = json_decode($result->result, true);
             return $resultado['success']
@@ -664,6 +974,163 @@ class GestionController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en asignaciones', ['message' => $e->getMessage(), 'cliente_id' => $clienteId]);
             return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // REPARTIR CLIENTES EN BLOQUE
+    // ================================================================
+
+    /**
+     * Los clientes a repartir, con quién los tiene hoy en el papel elegido.
+     *
+     * Filtra por dos sitios: `search`, el buscador de arriba, que mira además
+     * en correo, teléfono, dirección y razón social —campos que no están en
+     * la rejilla—; y `filtros`, el modelo de filtros de columna de ag-Grid tal
+     * cual lo da la rejilla, en JSON.
+     *
+     * LOS FILTROS DE LA CABECERA SE APLICAN AQUÍ, no en el navegador. La
+     * pantalla pagina en el servidor, así que ag-Grid sólo tiene veinte filas
+     * y filtrando por su cuenta buscaría dentro de veinte: la rejilla manda lo
+     * que el usuario pidió y el servidor lo aplica sobre los mil.
+     *
+     * Devuelve en `meta.ids` TODOS los que cumplen el filtro, no sólo los de
+     * la página: sin eso, repartir los 991 sueltos obligaría a pasar por
+     * cincuenta páginas marcando casillas.
+     */
+    public function clientesParaAsignar(Request $request)
+    {
+        try {
+            // Ver la lista no reparte nada, pero si no puede repartir ningún
+            // papel tampoco tiene por qué ver la cartera entera
+            $papeles = $this->papelesQueReparte();
+            if (!$papeles) {
+                return $this->errorResponse('Su perfil no puede repartir clientes', 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'page'     => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:200',
+                'search'   => 'nullable|string|max:200',
+                'filtros'  => 'nullable|string|max:4000',
+                // Para repartir sólo los de un área dibujada en el mapa
+                'zona_id'  => 'nullable|integer|min:1',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_asignacion_listar(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB, ?::BIGINT, ?::BIGINT) as result',
+                [
+                    (int) $request->input('page', 1),
+                    (int) $request->input('per_page', 20),
+                    (string) $request->input('search', ''),
+                    json_encode((object) $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_REPARTO)),
+                    auth('api')->id(),
+                    $request->filled('zona_id') ? (int) $request->input('zona_id') : null,
+                ]
+            );
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                return $this->errorResponse($r['message'] ?? 'No se pudo listar los clientes', 400);
+            }
+
+            // Viaja con la lista para que la pantalla ofrezca sólo los papeles
+            // que esta persona puede repartir. Es para pintar: quien decide de
+            // verdad es reasignarMasivo, que lo vuelve a comprobar.
+            $r['data']['meta']['papeles'] = $papeles;
+
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en clientesParaAsignar', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar los clientes', 500);
+        }
+    }
+
+    /**
+     * Reparte varios clientes de una vez.
+     *
+     * `destinos` es una lista de usuarios: con uno, todos van a esa persona;
+     * con varios, se reparten por turnos; vacía, se les quita el responsable.
+     *
+     * El resultado NO es un sí o un no: vuelve con cuántos se asignaron,
+     * cuántos ya lo tenían y cuáles fallaron y por qué. Un cliente que falle
+     * no tumba la tanda —eso lo resuelve la función, cada uno en su propio
+     * bloque—, así que la respuesta puede ser 200 y traer fallos dentro.
+     */
+    public function reasignarMasivo(Request $request)
+    {
+        try {
+            // El papel se valida ABAJO, pero el permiso se mira sobre lo que
+            // llega: repartir cobradores y repartir vendedores son dos
+            // permisos distintos, y quien tenga uno no puede colar el otro
+            // cambiando un campo del formulario.
+            $rol = strtoupper((string) ($this->datosDe($request)['rol'] ?? 'VENDEDOR'));
+
+            if (!in_array($rol, self::ROLES_RESPONSABLE, true) || !$this->puedeRepartir($rol)) {
+                sistemaLog('warning', 'Reparto masivo rechazado: no puede repartir ese papel', [
+                    'rol'     => $rol,
+                    'usuario' => $request->user()->login_user ?? null,
+                ]);
+                return $this->errorResponse('Su perfil no puede repartir clientes como ' . ucfirst(strtolower($rol)), 403);
+            }
+
+            $validator = Validator::make($this->datosDe($request), [
+                'ids'          => 'required|array|min:1|max:2000',
+                'ids.*'        => 'integer',
+                'destinos'     => 'present|array|max:50',
+                'destinos.*'   => 'integer|exists:pgsql.seguridad.users,id',
+                'rol'          => 'nullable|string|in:VENDEDOR,COBRADOR,ASISTENTE,POSTVENTA',
+                'motivo'       => 'nullable|string|max:1000',
+                'mover_agenda' => 'nullable|boolean',
+            ], [
+                'ids.required'      => 'Elija al menos un cliente',
+                'ids.max'           => 'Son demasiados clientes para una sola tanda (máximo 2000)',
+                'destinos.present'  => 'Indique a quién se reparten, o una lista vacía para quitarles el responsable',
+                'destinos.*.exists' => 'Alguno de los usuarios elegidos ya no existe',
+                'rol.in'            => 'El papel indicado no existe',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+            $d = $validator->validated();
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_reasignar_masivo(?::JSONB, ?::JSONB, ?::VARCHAR, ?::TEXT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([
+                    json_encode(array_values(array_map('intval', $d['ids']))),
+                    json_encode(array_values(array_map('intval', $d['destinos'] ?? []))),
+                    strtoupper($d['rol'] ?? 'VENDEDOR'),
+                    $d['motivo'] ?? null,
+                    array_key_exists('mover_agenda', $d) ? (bool) $d['mover_agenda'] : true,
+                ], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', 'Reparto masivo de clientes', [
+                'rol'       => $r['data']['rol'] ?? null,
+                'pedidos'   => $r['data']['pedidos'] ?? null,
+                'asignados' => $r['data']['asignados'] ?? null,
+                'omitidos'  => $r['data']['omitidos'] ?? null,
+                'fallidos'  => $r['data']['fallidos'] ?? null,
+                'destinos'  => $d['destinos'] ?? [],
+                'usuario'   => $request->user()->login_user ?? null,
+            ]);
+
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'reasignarMasivo rechazado', [
+                'sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(),
+            ]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en reasignarMasivo', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al repartir los clientes', 500);
         }
     }
 }

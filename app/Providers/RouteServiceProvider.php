@@ -30,7 +30,7 @@ class RouteServiceProvider extends ServiceProvider
         // });
 
         //lpaa -> codigo que controla 10000 solicitudos por minuto y por usuario
-        foreach (['api', 'auth', 'config', 'reporte', 'rh', 'ventas'] as $key) {
+        foreach (['api', 'auth', 'config', 'rh', 'ventas'] as $key) {
             RateLimiter::for($key, function (Request $request) {
                 return Limit::perMinute(10000)->by($request->user()?->id ?: $request->ip());
             });
@@ -104,11 +104,6 @@ class RouteServiceProvider extends ServiceProvider
                 ->middleware('config')
                 ->namespace($this->namespace)
                 ->group(base_path('routes/config.php'));
-
-            Route::prefix('reporte')
-                ->middleware('reporte')
-                ->namespace($this->namespace)
-                ->group(base_path('routes/reporte.php'));
 
             Route::prefix('rh')
                 ->middleware('rh')

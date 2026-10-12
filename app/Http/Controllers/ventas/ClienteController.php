@@ -26,6 +26,7 @@ use App\Http\Resources\ApiResponder;
  *   GET    ventas/cliente/findByIdCliente/{id}
  *   POST   ventas/cliente/addCliente
  *   POST   ventas/cliente/editCliente/{id}
+ *   POST   ventas/cliente/activarCliente/{id}      { activo? }; sin ella, alterna
  *   DELETE ventas/cliente/deleteCliente/{id}
  *   POST   ventas/cliente/addImagen                { ClienteId, imagen_file }
  *   GET    ventas/cliente/getImagenCliente/{id}    (pública, la usa <img src>)
@@ -42,6 +43,46 @@ use App\Http\Resources\ApiResponder;
  */
 class ClienteController extends Controller
 {
+    // El traductor del modelo de filtros de ag-Grid, compartido con las
+    // demás pantallas que paginan en el servidor
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de clientes, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'                    => 'numero',
+        'limite_credito'        => 'numero',
+        'dias_credito'          => 'numero',
+        'descuento'             => 'numero',
+        'tipo_cliente'          => 'texto',
+        'tipo_identificacion'   => 'texto',
+        'numero_identificacion' => 'texto',
+        'nombre_completo'       => 'texto',
+        'nombre_comercial'      => 'texto',
+        'email'                 => 'texto',
+        'celular'               => 'texto',
+        'telefono'              => 'texto',
+        'direccion'             => 'texto',
+        'provincia'             => 'texto',
+        'canton'                => 'texto',
+        'parroquia'             => 'texto',
+        'forma_pago'            => 'texto',
+        'estado'                => 'texto',
+        'vendedor_nombre'       => 'texto',
+        'created_by'            => 'texto',
+        'updated_by'            => 'texto',
+        // Como texto sobre la fecha ya formateada: «2026-10» busca el mes
+        'created_at'            => 'texto',
+        'updated_at'            => 'texto',
+    ];
+
     use ApiResponder;
 
     private const CARPETA_FOTOS = 'img/clientes';
@@ -258,9 +299,15 @@ class ClienteController extends Controller
             $soloMios  = filter_var($request->query('mios', false), FILTER_VALIDATE_BOOLEAN);
             $usuarioId = $soloMios ? ($request->user()->id ?? null) : null;
 
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no en
+            // el navegador: la pantalla pagina en el servidor, así que ag-Grid
+            // sólo tiene quince filas y filtrando por su cuenta buscaría dentro
+            // de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_clientes_listar_paginado(?, ?, ?, ?, ?) as result',
-                [$page, $perPage, $search, $estado, $usuarioId]
+                'SELECT ventas.fn_clientes_listar_paginado(?, ?, ?, ?, ?, ?::JSONB) as result',
+                [$page, $perPage, $search, $estado, $usuarioId, json_encode((object) $filtros)]
             );
             $resultado = json_decode($result->result, true);
             if (isset($resultado['success']) && $resultado['success'] === false) {
@@ -358,6 +405,49 @@ class ClienteController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en editCliente', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cliente_id' => $id]);
             return $this->errorResponse('Ocurrió un error al actualizar el cliente', 500);
+        }
+    }
+
+    /**
+     * Pone `activo` y nada más.
+     *
+     * Existe aparte de editCliente porque bajar la casilla de la rejilla no
+     * tiene por qué revalidar la ficha entera: fn_clientes_modificar vuelve a
+     * pasar por identificación, correos, cupo y descuento, y un cliente con
+     * cualquiera de esas cosas mal —cargado antes de que existiera la regla—
+     * no se podría desactivar hasta arreglarle el resto.
+     *
+     * `activo` es opcional: sin él la función alterna. La pantalla sí lo manda
+     * para que dos personas pulsando a la vez no acaben peleando por «lo
+     * contrario de lo que había».
+     *
+     * Quién puede hacerlo lo deciden el middleware y el perfil, igual que en
+     * editCliente: esto no es una puerta más abierta, es la misma por la que
+     * ya se cambiaba la casilla guardando el formulario.
+     */
+    public function activarCliente(Request $request, $id)
+    {
+        try {
+            $d = $this->datosDe($request);
+            $activo = array_key_exists('activo', $d) && $d['activo'] !== null && $d['activo'] !== ''
+                ? filter_var($d['activo'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_activar(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $activo], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+            sistemaLog('info', 'Cliente activado/desactivado', ['cliente_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'activarCliente rechazado', ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'cliente_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en activarCliente', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cliente_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar el estado del cliente', 500);
         }
     }
 

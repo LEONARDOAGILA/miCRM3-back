@@ -14,6 +14,9 @@ use Illuminate\Support\Facades\DB;
  */
 trait PermisosDeArchivo
 {
+    /** Memoria de esAdminDeArchivos() dentro de la misma petición. */
+    private ?bool $adminDeArchivos = null;
+
     /**
      * Banderas efectivas del usuario sobre el archivo:
      * { ver, ejecutar, descargar, crear, editar, eliminar, administrar, origen }.
@@ -63,10 +66,37 @@ trait PermisosDeArchivo
         return (bool) $this->permisoEfectivo((int) $userId, $archivoId, true)->restaurar;
     }
 
-    /** Super usuario (1) o administrador (2): la función SQL les da todo. */
+    /**
+     * Administrador del gestor de archivos: la función SQL les da todo.
+     *
+     * Manda `es_administrador` del GRUPO, la misma señal que usa
+     * seguridad.fn_permiso_archivo y que el resto del CRM (la lista de
+     * clientes, la agenda, el tablero, la visibilidad de datos).
+     *
+     * Antes mandaba users.type_user IN (1, 2), de cuando el gestor nació y
+     * todavía no había grupos. Eso dejaba fuera a quien es administrador por
+     * su grupo con otro type_user —SISTEMAS-GYE, por ejemplo— y además se
+     * quedaba atrás en cuanto se le cambiaba de grupo a alguien.
+     *
+     * Se resuelve una sola vez por petición: lo preguntan el árbol, la
+     * papelera y cada comprobación de nodo.
+     */
     protected function esAdminDeArchivos(): bool
     {
-        return in_array((int) (auth()->user()->type_user ?? 0), [1, 2], true);
+        if ($this->adminDeArchivos !== null) { return $this->adminDeArchivos; }
+
+        $userId = auth()->id();
+        if (!$userId) { return false; }   // sin cachear: aún puede no haber sesión
+
+        $fila = DB::selectOne(
+            'SELECT COALESCE(g.es_administrador, false) AS admin
+               FROM seguridad.users u
+               LEFT JOIN seguridad.grupos g ON g.id = u.grupo_id
+              WHERE u.id = ?',
+            [(int) $userId]
+        );
+
+        return $this->adminDeArchivos = (bool) ($fila->admin ?? false);
     }
 
     /**

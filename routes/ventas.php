@@ -8,6 +8,7 @@ use App\Http\Controllers\ventas\CatalogoGestionController;
 use App\Http\Controllers\ventas\WhatsappPlantillaController;
 use App\Http\Controllers\ventas\ArchivoClienteController;
 use App\Http\Controllers\ventas\NotaClienteController;
+use App\Http\Controllers\ventas\ZonaController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -26,6 +27,7 @@ Route::group([
     Route::post('addCliente', [ClienteController::class, 'addCliente'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('editCliente/{id}', [ClienteController::class, 'editCliente'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::delete('deleteCliente/{id}', [ClienteController::class, 'deleteCliente'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::post('activarCliente/{id}', [ClienteController::class, 'activarCliente'])->middleware(['jwt.auth', 'usuario.activo']);   // { activo? }; sin ella, alterna
     Route::post('addImagen', [ClienteController::class, 'addImagen'])->middleware(['jwt.auth', 'usuario.activo']);           // { ClienteId, imagen_file }
     Route::get('listContactos/{id}', [ClienteController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // personas de contacto
     Route::post('guardarContactos/{id}', [ClienteController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza
@@ -50,6 +52,7 @@ Route::group([
     Route::get('allGestiones', [GestionController::class, 'allGestiones']);                 // ?cliente_id&page&per_page&search&tipo&estado&desde&hasta
     Route::get('findByIdGestion/{id}', [GestionController::class, 'findByIdGestion']);
     Route::get('resumen/{clienteId}', [GestionController::class, 'resumen']);               // contadores + última y próxima
+    Route::get('importadas/{clienteId}', [GestionController::class, 'importadas']);         // conversaciones traídas de un fichero
     Route::get('estadisticas', [GestionController::class, 'estadisticas']);   // tablero: ?dias=14
     Route::get('agenda', [GestionController::class, 'agenda']);
     Route::get('agendaPaginada', [GestionController::class, 'agendaPaginada']);  // la grilla: + ?page&per_page&search                             // ?empleado_id&desde&hasta&limite
@@ -61,7 +64,12 @@ Route::group([
     // Cartera
     Route::post('reasignar/{clienteId}', [GestionController::class, 'reasignar']);          // { empleado_id, motivo?, mover_agenda?, rol? }
     Route::get('asignaciones/{clienteId}', [GestionController::class, 'asignaciones']);
+
+    // Repartir clientes en bloque (administradores)
+    Route::get('clientesParaAsignar', [GestionController::class, 'clientesParaAsignar']);  // ?rol=&responsable_id=&sin_responsable=&search=&page=
+    Route::post('reasignarMasivo', [GestionController::class, 'reasignarMasivo']);         // { ids[], destinos[], rol?, motivo?, mover_agenda? }
     Route::get('responsables/{clienteId}', [GestionController::class, 'responsables']);  // quién lo atiende ahora, por papel
+    Route::get('asignables', [GestionController::class, 'asignables']);                              // ?cliente_id= : a quién puede dejar la gestión a cargo
 });
 
 // CATÁLOGO DE GESTIÓN (tipos y sus asuntos)
@@ -84,17 +92,9 @@ Route::group([
     Route::delete('deleteAsunto/{id}', [CatalogoGestionController::class, 'deleteAsunto']);  // si está en uso, desactiva
 });
 
-// PLANTILLAS DE WHATSAPP
-// Los mensajes que se ofrecen al escribirle a un cliente. Estaban escritos en
-// el código del front; ahora se mantienen desde la pantalla.
-Route::group([
-    'prefix' => 'whatsappPlantilla', 'middleware' => ['jwt.auth', 'usuario.activo']
-], function () {
-    Route::get('allPlantillas', [WhatsappPlantillaController::class, 'allPlantillas']);          // ?inactivos=0 para el menú
-    Route::post('addPlantilla', [WhatsappPlantillaController::class, 'savePlantilla']);
-    Route::post('editPlantilla/{id}', [WhatsappPlantillaController::class, 'savePlantilla']);
-    Route::delete('deletePlantilla/{id}', [WhatsappPlantillaController::class, 'deletePlantilla']);
-});
+// Los mensajes que se ofrecen al escribirle a un cliente tuvieron aquí su
+// propio grupo de rutas y su propia tabla. Ya no: son el campo `mensaje` de
+// un asunto del catálogo, y se mantienen con saveAsunto, ahí arriba.
 
 // ARCHIVOS DEL CLIENTE (fotos del local, contratos, videos de la visita)
 // Los ficheros van a storage/app/public/img/clientes, junto a la foto y el
@@ -139,4 +139,21 @@ Route::group(['prefix' => 'whatsapp'], function () {
         Route::get('sinAsignar', [WhatsappController::class, 'sinAsignar']);                   // ?limite=50
         Route::post('asignar', [WhatsappController::class, 'asignar']);                        // { numero, cliente_id }
     });
+});
+
+
+// ZONAS DE CLIENTES
+// Áreas dibujadas en el mapa para saber qué clientes caen dentro. El prefijo
+// cuelga de /ventas, que ya está en config/cors.php, así que no hay que
+// añadir nada allí.
+Route::group([
+    'prefix' => 'zona', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allZonas', [ZonaController::class, 'allZonas']);                 // ?inactivas=0
+    Route::get('findByIdZona/{id}', [ZonaController::class, 'findByIdZona']);
+    Route::get('clientes/{id}', [ZonaController::class, 'clientes']);            // ?page&per_page&search
+    Route::get('clientesUbicados', [ZonaController::class, 'clientesUbicados']); // ?limite&min_lat&max_lat&min_lng&max_lng
+    Route::post('saveZona', [ZonaController::class, 'saveZona']);                // { nombre, tipo, vertices|centro+radio, color? }
+    Route::post('saveZona/{id}', [ZonaController::class, 'saveZona']);
+    Route::delete('deleteZona/{id}', [ZonaController::class, 'deleteZona']);
 });

@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 /**
  * Los archivos de un cliente: fotos del local, el RUC escaneado, el contrato,
@@ -22,12 +23,21 @@ use Illuminate\Support\Str;
  * del fichero: así cambiar de dominio o de servidor no obliga a reescribir
  * ninguna fila.
  *
+ * Los adjuntos de una GESTIÓN van aparte, a img/clientes/gestiones. No es
+ * manía de ordenar: la carpeta del cliente es la que se mira cuando alguien
+ * pregunta «qué documentos tenemos de este cliente», y mezclar ahí todo lo que
+ * se mandó por WhatsApp en un año la vuelve inservible. Son dos cosas
+ * distintas y se guardan en dos sitios distintos.
+ *
+ * Los que se subieron antes de ese cambio siguen en la carpeta de siempre, así
+ * que para leer y para borrar se busca en las dos (ver rutaDeFichero).
+ *
  *   GET    ventas/archivoCliente/allArchivos?cliente_id=  los del cliente
  *   POST   ventas/archivoCliente/subirArchivo             { cliente_id, archivo }  sólo sube
  *   POST   ventas/archivoCliente/addArchivo               crea el registro
  *   POST   ventas/archivoCliente/editArchivo/{id}         nombre, descripción, orden, activo
  *   DELETE ventas/archivoCliente/deleteArchivo/{id}       registro + fichero
- *   GET    ventas/archivoCliente/ver/{id}                 (pública) sirve el fichero
+ *   GET    ventas/archivoCliente/ver/{id}?t=<token>       sirve el fichero
  *
  * Subir y crear el registro van separados, como en el administrador de
  * archivos: así la pantalla puede enseñar el progreso de cada fichero y, si
@@ -41,6 +51,34 @@ class ArchivoClienteController extends Controller
     /** La misma carpeta donde ClienteController guarda la foto y el mapa. */
     private const CARPETA = 'img/clientes';
 
+    /** Lo adjuntado a una gestión, aparte de los documentos del cliente. */
+    private const CARPETA_GESTIONES = 'img/clientes/gestiones';
+
+    /** Qué carpeta le toca a un fichero según de dónde venga. */
+    private static function carpetaDe(?string $origen): string
+    {
+        return $origen === 'gestion' ? self::CARPETA_GESTIONES : self::CARPETA;
+    }
+
+    /**
+     * Dónde está de verdad un fichero.
+     *
+     * Primero donde le toca por su origen y, si no está, en la otra carpeta:
+     * los adjuntos de gestión subidos antes de que existiera img/clientes/
+     * gestiones siguen en la carpeta del cliente, y tienen que poder abrirse y
+     * borrarse igual. Devuelve null si no está en ninguna.
+     */
+    private static function rutaDeFichero(?string $archivo, ?string $origen): ?string
+    {
+        if (!$archivo) { return null; }
+
+        foreach ([self::carpetaDe($origen), self::CARPETA, self::CARPETA_GESTIONES] as $carpeta) {
+            $ruta = storage_path('app/public/' . $carpeta . '/' . $archivo);
+            if (file_exists($ruta)) { return $ruta; }
+        }
+        return null;
+    }
+
     /** SQLSTATE de las funciones → código HTTP. */
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,  // falta un dato obligatorio
@@ -51,7 +89,9 @@ class ArchivoClienteController extends Controller
 
     public function __construct()
     {
-        // 'ver' queda fuera: la usa <img src> / <video src>, que no mandan cabeceras
+        // 'ver' queda fuera del middleware, pero NO es pública: la usan <img src>
+        // y <video src>, que no mandan cabeceras, así que el token llega por la
+        // url (?t=) y se comprueba a mano dentro. Ver quienPuedeVer().
         $this->middleware('auth:api')->except(['ver']);
     }
 
@@ -110,9 +150,14 @@ class ArchivoClienteController extends Controller
             $origen = (string) $request->query('origen', 'archivo');
             $origen = in_array($origen, ['archivo', 'nota', 'gestion'], true) ? $origen : null;
 
+            // Quién pregunta, que es lo que decide qué archivos de ese cliente
+            // se le devuelven. No es opcional: la función falla cerrado y sin
+            // usuario no devuelve ninguno.
+            $quien = auth('api')->id();
+
             $result = DB::selectOne(
-                'SELECT ventas.fn_archivos_clientes_listar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT) as result',
-                [$clienteId ?: null, $incluirInactivos, $origen, $gestionId ?: null]
+                'SELECT ventas.fn_archivos_clientes_listar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR, ?::BIGINT, ?::BIGINT) as result',
+                [$clienteId ?: null, $incluirInactivos, $origen, $gestionId ?: null, $quien]
             );
             $r = json_decode($result->result, true);
             return $this->successResponse($r['data'], $r['message']);
@@ -137,6 +182,10 @@ class ArchivoClienteController extends Controller
      * El tipo se deduce de la EXTENSIÓN, no del contenido, reutilizando la
      * tabla del administrador de archivos: un .xlsx es un ZIP por dentro y la
      * regla `mimes:` de Laravel lo clasificaría mal.
+     *
+     * Con origen=gestion el fichero va a img/clientes/gestiones. El origen se
+     * manda al SUBIR y no sólo al crear el registro porque para entonces el
+     * fichero ya está escrito: decidirlo después obligaría a moverlo.
      */
     public function subirArchivo(Request $request)
     {
@@ -156,6 +205,9 @@ class ArchivoClienteController extends Controller
                 return $this->errorResponse('El cliente no existe o está en la papelera', 404);
             }
 
+            $origen  = $request->input('origen') === 'gestion' ? 'gestion' : null;
+            $carpeta = self::carpetaDe($origen);
+
             $fichero   = $request->file('archivo');
             $extension = strtolower($fichero->getClientOriginalExtension());
             if ($extension === '') {
@@ -165,10 +217,12 @@ class ArchivoClienteController extends Controller
             $base   = Str::slug(pathinfo($fichero->getClientOriginalName(), PATHINFO_FILENAME)) ?: 'archivo';
             $nombre = $clienteId . '_' . substr($base, 0, 50) . '-' . date('Ymd-His') . '-' . Str::lower(Str::random(6)) . '.' . $extension;
 
-            if (!$fichero->storeAs('public/' . self::CARPETA, $nombre)) {
+            // storeAs crea la carpeta si no existe, así que la primera gestión con
+            // adjunto es la que estrena img/clientes/gestiones
+            if (!$fichero->storeAs('public/' . $carpeta, $nombre)) {
                 return $this->errorResponse('No se pudo guardar el archivo en el servidor', 500);
             }
-            $ruta = storage_path('app/public/' . self::CARPETA . '/' . $nombre);
+            $ruta = storage_path('app/public/' . $carpeta . '/' . $nombre);
             if (!file_exists($ruta) || filesize($ruta) === 0) {
                 // Un fichero de 0 bytes es que la subida se cortó o venía vacío. Se
                 // quita antes de rendirse: si no, la carpeta se va llenando de
@@ -286,10 +340,8 @@ class ArchivoClienteController extends Controller
             $r = json_decode($result->result, true);
 
             $archivo = $r['data']['archivo'] ?? null;
-            if ($archivo) {
-                $ruta = 'public/' . self::CARPETA . '/' . $archivo;
-                if (Storage::exists($ruta)) { Storage::delete($ruta); }
-            }
+            $ruta    = self::rutaDeFichero($archivo, $r['data']['origen'] ?? null);
+            if ($ruta) { @unlink($ruta); }
 
             sistemaLog('info', 'Archivo de cliente eliminado', ['archivo_id' => $id, 'archivo' => $archivo]);
             return $this->successResponse($r['data'], $r['message']);
@@ -316,19 +368,134 @@ class ArchivoClienteController extends Controller
      * Con ?descargar=1 fuerza la descarga con el nombre que puso el usuario,
      * en vez de abrirlo en el navegador.
      */
+    /**
+     * Quién pide el fichero, y si puede.
+     *
+     * El token llega por la url porque quien pide es un <img src>, un <video
+     * src> o un <iframe>, y esos no mandan cabeceras. Se acepta también la
+     * cabecera de siempre, para quien sí pueda ponerla.
+     *
+     * QUE EL TOKEN VAYA EN LA URL TIENE UN COSTE: queda en el historial del
+     * navegador y en los registros del servidor. Se acepta aquí porque la
+     * alternativa —enlaces firmados con caducidad— obliga a que el servidor
+     * acuñe una url por fichero y a cambiar los tres sitios que las construyen;
+     * es la mejora siguiente, no la primera.
+     *
+     * Devuelve el usuario, o null si no hay sesión válida.
+     */
+    private function quienPide(Request $request)
+    {
+        $token = $request->query('t') ?: $request->bearerToken();
+        if (!$token) { return null; }
+
+        try {
+            return JWTAuth::setToken($token)->authenticate() ?: null;
+        } catch (Exception $e) {
+            return null;
+        }
+    }
+
+    /**
+     * ¿Ese usuario puede ver los ficheros de ese cliente?
+     *
+     * La misma regla que decide qué clientes se ven en la lista: los de la
+     * gente a cargo (el propio usuario y los grupos por debajo del suyo), y
+     * todo si su grupo es administrador. Reusar la función de ventas es lo que
+     * evita que dentro de un mes la lista diga una cosa y los ficheros otra.
+     */
+    private function puedeVerCliente($usuario, $clienteId): bool
+    {
+        if (!$usuario || !$clienteId) { return false; }
+
+        $fila = DB::selectOne(
+            'SELECT COALESCE(g.es_administrador, false) AS admin
+               FROM seguridad.users u
+               LEFT JOIN seguridad.grupos g ON g.id = u.grupo_id
+              WHERE u.id = ?',
+            [(int) $usuario->id]
+        );
+        if ($fila && $fila->admin) { return true; }
+
+        $puede = DB::selectOne(
+            'SELECT ventas.fn_cliente_es_de_alguno(?::BIGINT, ventas.fn_usuarios_a_cargo(?::BIGINT)) AS si',
+            [(int) $clienteId, (int) $usuario->id]
+        );
+        return (bool) ($puede->si ?? false);
+    }
+
+    /**
+     * ¿Y ese fichero concreto, se lo deja ver su perfil?
+     *
+     * Son dos reglas distintas según de dónde salió el fichero:
+     *
+     *   colgado de una gestión  manda la gestión. Un adjunto es parte de ella,
+     *                           no un documento del cliente: si se ve la
+     *                           gestión se ven sus adjuntos, y si no, ninguno.
+     *   pegado en una nota      el dato NOTA, que es lo que lo contiene.
+     *   de la pestaña Archivos  el dato ARCHIVO.
+     *
+     * Con la tabla de visibilidad vacía las tres dicen sí, que es lo de hoy.
+     */
+    private function puedeVerArchivo($usuario, $fila): bool
+    {
+        if (!empty($fila->gestion_id)) {
+            $r = DB::selectOne(
+                'SELECT ventas.fn_gestion_visible_para(?::BIGINT, ?::BIGINT) AS si',
+                [(int) $fila->gestion_id, (int) $usuario->id]
+            );
+            return (bool) ($r->si ?? false);
+        }
+
+        $r = DB::selectOne(
+            'SELECT seguridad.fn_puede_ver(?::BIGINT, ?::VARCHAR, ?::BIGINT) AS si',
+            [
+                (int) $usuario->id,
+                $fila->origen === 'nota' ? 'NOTA' : 'ARCHIVO',
+                $fila->usuario_id !== null ? (int) $fila->usuario_id : null,
+            ]
+        );
+        return (bool) ($r->si ?? false);
+    }
+
     public function ver(Request $request, $id)
     {
         try {
+            $usuario = $this->quienPide($request);
+            if (!$usuario) {
+                return $this->errorResponse('Hay que iniciar sesión para ver este archivo', 401);
+            }
+
             $fila = DB::selectOne(
-                'SELECT nombre, archivo, mime, extension FROM ventas.archivos_clientes WHERE id = ?',
+                'SELECT nombre, archivo, mime, extension, origen, cliente_id, gestion_id, usuario_id
+                   FROM ventas.archivos_clientes WHERE id = ?',
                 [(int) $id]
             );
             if (!$fila) {
                 return $this->errorResponse('El archivo no existe', 404);
             }
 
-            $ruta = storage_path('app/public/' . self::CARPETA . '/' . $fila->archivo);
-            if (!file_exists($ruta)) {
+            // Antes esto no se miraba: con el id a mano, cualquiera se llevaba
+            // el fichero de cualquier cliente sin siquiera tener sesión.
+            if (!$this->puedeVerCliente($usuario, $fila->cliente_id)) {
+                sistemaLog('warning', 'Intento de ver un archivo de otro cliente', [
+                    'archivo_id' => $id, 'usuario_id' => $usuario->id ?? null,
+                ]);
+                return $this->errorResponse('Este archivo no es de un cliente tuyo', 403);
+            }
+
+            // Y la segunda pregunta: dentro del cliente, ¿este fichero es de
+            // los que le toca ver? Sin esto, tapar un adjunto en la lista no
+            // serviría de nada —el enlace directo seguiría dándolo—, que es
+            // exactamente la fuga que se acaba de cerrar, una puerta más allá.
+            if (!$this->puedeVerArchivo($usuario, $fila)) {
+                sistemaLog('warning', 'Intento de ver un archivo fuera de su visibilidad', [
+                    'archivo_id' => $id, 'usuario_id' => $usuario->id ?? null,
+                ]);
+                return $this->errorResponse('Este archivo no está a su alcance', 403);
+            }
+
+            $ruta = self::rutaDeFichero($fila->archivo, $fila->origen);
+            if (!$ruta) {
                 return $this->errorResponse('El archivo ya no está en el servidor', 404);
             }
 
