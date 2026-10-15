@@ -65,6 +65,11 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 
+        'inventarios' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':inventarios',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
     ];
 
     /**
