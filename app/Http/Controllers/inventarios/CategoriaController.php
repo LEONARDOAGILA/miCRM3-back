@@ -42,6 +42,7 @@ class CategoriaController extends Controller
         'P0014' => 409,   // no se puede eliminar: tiene hijos o productos
         'P0015' => 422,   // valor inválido (nivel máximo)
         'P0016' => 422,   // la categoría padre no existe
+        'P0019' => 404,   // la categoría no está en la papelera
     ];
 
     public function __construct()
@@ -328,7 +329,7 @@ class CategoriaController extends Controller
             );
             $r = json_decode($result->result, true);
 
-            sistemaLog('info', 'Categoría eliminada', ['categoria_id' => $id]);
+            sistemaLog('info', 'Categoría enviada a la papelera', ['categoria_id' => $id]);
             return $this->successResponse($r['data'], $r['message']);
 
         } catch (QueryException $e) {
@@ -339,6 +340,97 @@ class CategoriaController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en deleteCategoria', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'categoria_id' => $id]);
             return $this->errorResponse('Ocurrió un error al eliminar la categoría', 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» una categoría es un borrado lógico: sale del árbol y de los
+    // combos, deja de contar como subcategoría de su madre, y desde la
+    // papelera se restaura o se borra de verdad.
+    //
+    // Lo propio del árbol lo resuelven las funciones de base: no se restaura
+    // lo que cuelga de algo que sigue en la papelera, y el borrado definitivo
+    // va de lo más hondo a lo más alto.
+
+    /** Categorías que están en la papelera (más reciente primero). */
+    public function papelera()
+    {
+        try {
+            $result = DB::selectOne('SELECT inventarios.fn_categorias_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+
+            if (isset($r['success']) && $r['success'] === false) {
+                return $this->errorResponse($r['message'], 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de categorías', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Saca de la papelera una o varias categorías. Body: { ids: [..] } */
+    public function restaurarCategorias(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_categorias_restaurar', 'restaurarCategorias');
+    }
+
+    /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+    public function eliminarDefinitivo(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_categorias_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    /** Borrado real de TODO lo que hay en la papelera. */
+    public function vaciarPapelera(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_categorias_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /**
+     * El tronco común de restaurar / eliminar definitivo / vaciar: validar,
+     * llamar y traducir el error. No hay ficheros que borrar —una categoría
+     * no tiene imágenes—, a diferencia de la papelera de productos.
+     */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        try {
+            $auditoria = $this->auditoria($request);
+
+            if ($conIds) {
+                $validator = Validator::make($request->all(), [
+                    'ids'   => 'required|array|min:1|max:500',
+                    'ids.*' => 'integer',
+                ], [
+                    'ids.required' => 'No se indicó ninguna categoría',
+                ]);
+                if ($validator->fails()) {
+                    return $this->errorResponse($validator->errors()->first(), 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, " . self::CASTS_AUDIT . ") as result",
+                    array_merge([json_encode(array_map('intval', $validator->validated()['ids']))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}(" . self::CASTS_AUDIT . ") as result", $auditoria);
+            }
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', "Papelera de categorías: {$nombre}", ['data' => $r['data'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado",
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de categorías', 500);
         }
     }
 }

@@ -36,6 +36,7 @@ class DepartamentoController extends Controller
      * Son errores del usuario, no fallos del servidor: se responden como 4xx.
      */
     private const ERRORES_NEGOCIO = [
+        'P0019' => 404,   // el departamento no está en la papelera
         'P0001' => 422,   // nombre obligatorio
         'P0006' => 409,   // nombre duplicado
         'P0013' => 404,   // el departamento no existe
@@ -81,6 +82,9 @@ class DepartamentoController extends Controller
             'descripcion' => 'nullable|string|max:1000',
             'empleado_id' => 'nullable|integer',
             'activo'      => 'nullable|boolean',
+            // El árbol: de quién cuelga. Sólo se mira al crear; para
+            // cambiar de rama está moverDepartamento (arrastrar y soltar).
+            'padre_id'    => 'nullable|integer',
         ];
     }
 
@@ -201,6 +205,7 @@ class DepartamentoController extends Controller
                     ?::TEXT,      -- p_descripcion
                     ?::BIGINT,    -- p_empleado_id
                     ?::BOOLEAN,   -- p_activo
+                    ?::BIGINT,    -- p_padre_id
                     ?::BIGINT,    -- p_usuario_id
                     ?::VARCHAR,   -- p_usuario_login
                     ?::VARCHAR,   -- p_usuario_nombre
@@ -214,6 +219,7 @@ class DepartamentoController extends Controller
                 $d['descripcion'] ?? null,
                 !empty($d['empleado_id']) ? (int) $d['empleado_id'] : null,
                 array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                !empty($d['padre_id']) ? (int) $d['padre_id'] : null,
                 $usuarioId ? (int) $usuarioId : null,
                 $usuarioLogin,
                 $usuarioNombre,
@@ -382,6 +388,180 @@ class DepartamentoController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en deleteDepartamento', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'departamento_id' => $id]);
             return $this->errorResponse('Ocurrió un error al eliminar el departamento', 500);
+        }
+    }
+
+    // ================================================================
+    // EL ÁRBOL
+    // ================================================================
+
+    /**
+     * El árbol entero, ya ordenado para pintarlo.
+     *
+     * No pagina: son pocas filas y una rama partida entre dos páginas no se
+     * entiende. La rejilla filtra en el navegador.
+     */
+    public function arbolDepartamentos(Request $request)
+    {
+        try {
+            $soloActivos = filter_var($request->input('activos', '0'), FILTER_VALIDATE_BOOLEAN);
+
+            $result = DB::selectOne('SELECT rh.fn_departamentos_listar_arbol(?::BOOLEAN) as result', [$soloActivos]);
+            $r = json_decode($result->result, true);
+
+            if (isset($r['success']) && $r['success'] === false) {
+                return $this->errorResponse($r['message'], 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en arbolDepartamentos', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar el árbol de departamentos', 500);
+        }
+    }
+
+    /**
+     * Mueve un departamento de rama o le cambia el orden.
+     *
+     * Body: { padre_id: id|null, antes_de: id|null }. `padre_id` null lo deja
+     * en el primer nivel; `antes_de` null lo pone al final de sus hermanos.
+     *
+     * La función de base devuelve `success:false` con un `error_code` para lo
+     * que es decisión del usuario (ciclo, nivel máximo, nombre repetido): eso
+     * es un 409, no un 500.
+     */
+    public function moverDepartamento(Request $request, $id)
+    {
+        [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
+        try {
+            $padre   = $request->input('padre_id');
+            $antesDe = $request->input('antes_de');
+
+            $result = DB::selectOne('
+                SELECT rh.fn_departamentos_mover(
+                    ?::BIGINT, ?::BIGINT, ?::BIGINT,
+                    ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID
+                ) as result
+            ', [
+                (int) $id,
+                ($padre   === null || $padre   === '') ? null : (int) $padre,
+                ($antesDe === null || $antesDe === '') ? null : (int) $antesDe,
+                $usuarioId ? (int) $usuarioId : null,
+                $usuarioLogin,
+                $usuarioNombre,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid(),
+            ]);
+            $r = json_decode($result->result, true);
+
+            if (($r['success'] ?? false) !== true) {
+                return $this->errorResponse($r['message'] ?? 'No se pudo mover el departamento', 409);
+            }
+
+            sistemaLog('info', 'Departamento movido', ['departamento_id' => $id, 'padre_id' => $padre, 'antes_de' => $antesDe]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'moverDepartamento rechazado',
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'departamento_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en moverDepartamento', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'departamento_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al mover el departamento', 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» un departamento es un borrado lógico: sale del árbol y de
+    // los combos, deja de contar como subdepartamento del suyo, y desde la
+    // papelera se restaura o se borra de verdad.
+
+    /** Departamentos que están en la papelera (más reciente primero). */
+    public function papelera()
+    {
+        try {
+            $result = DB::selectOne('SELECT rh.fn_departamentos_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+
+            if (isset($r['success']) && $r['success'] === false) {
+                return $this->errorResponse($r['message'], 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de departamentos', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Saca de la papelera uno o varios departamentos. Body: { ids: [..] } */
+    public function restaurarDepartamentos(Request $request)
+    {
+        return $this->accionPapelera($request, 'rh.fn_departamentos_restaurar', 'restaurarDepartamentos');
+    }
+
+    /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+    public function eliminarDefinitivo(Request $request)
+    {
+        return $this->accionPapelera($request, 'rh.fn_departamentos_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    /** Borrado real de TODO lo que hay en la papelera. */
+    public function vaciarPapelera(Request $request)
+    {
+        return $this->accionPapelera($request, 'rh.fn_departamentos_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /** El tronco común de restaurar / eliminar definitivo / vaciar. */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
+        $auditoria = [
+            $usuarioId ? (int) $usuarioId : null,
+            $usuarioLogin,
+            $usuarioNombre,
+            $request->ip(),
+            $request->userAgent(),
+            (string) Str::uuid(),
+        ];
+        $casts = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
+
+        try {
+            if ($conIds) {
+                $validator = Validator::make($request->all(), [
+                    'ids'   => 'required|array|min:1|max:500',
+                    'ids.*' => 'integer',
+                ], [
+                    'ids.required' => 'No se indicó ningún departamento',
+                ]);
+                if ($validator->fails()) {
+                    return $this->errorResponse($validator->errors()->first(), 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, {$casts}) as result",
+                    array_merge([json_encode(array_map('intval', $validator->validated()['ids']))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}({$casts}) as result", $auditoria);
+            }
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', "Papelera de departamentos: {$nombre}", ['data' => $r['data'] ?? null, 'usuario' => $usuarioLogin ?? 'desconocido']);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado",
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de departamentos', 500);
         }
     }
 }

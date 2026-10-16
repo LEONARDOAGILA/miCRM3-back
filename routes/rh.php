@@ -37,7 +37,17 @@ Route::group([
     Route::post('addDepartamento', [DepartamentoController::class, 'addDepartamento']);
     Route::post('editDepartamento/{id}', [DepartamentoController::class, 'editDepartamento']);
     Route::post('activarDepartamento/{id}', [DepartamentoController::class, 'activarDepartamento']);   // { activo? }; sin ella, alterna
-    Route::delete('deleteDepartamento/{id}', [DepartamentoController::class, 'deleteDepartamento']);
+    Route::delete('deleteDepartamento/{id}', [DepartamentoController::class, 'deleteDepartamento']);   // a la papelera
+
+    // El árbol: la rejilla trae el árbol entero y se mueve arrastrando
+    Route::get('arbolDepartamentos', [DepartamentoController::class, 'arbolDepartamentos']);           // ?activos=1 para sólo los activos
+    Route::post('moverDepartamento/{id}', [DepartamentoController::class, 'moverDepartamento']);       // { padre_id, antes_de }
+
+    // Papelera de reciclaje (borrado lógico: deleteDepartamento manda a la papelera)
+    Route::get('papelera', [DepartamentoController::class, 'papelera']);
+    Route::post('restaurarDepartamentos', [DepartamentoController::class, 'restaurarDepartamentos']); // { ids: [...] }
+    Route::post('eliminarDefinitivo', [DepartamentoController::class, 'eliminarDefinitivo']);         // { ids: [...] }
+    Route::delete('vaciarPapelera', [DepartamentoController::class, 'vaciarPapelera']);
 });
 
 // EMPLEADOS

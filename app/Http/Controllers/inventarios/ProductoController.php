@@ -41,6 +41,39 @@ use App\Http\Resources\ApiResponder;
 class ProductoController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de productos, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `activo`, `foto` y `maneja_serie` se quedan fuera a propósito: en la
+     * rejilla son una casilla y dos iconos, y escribir en un filtro de texto
+     * para marcar o desmarcar no se entiende.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'               => 'numero',
+        'costo'            => 'numero',
+        'precio'           => 'numero',
+        'iva_porcentaje'   => 'numero',
+        'garantia_meses'   => 'numero',
+        'stock_minimo'     => 'numero',
+        'num_imagenes'     => 'numero',
+        'codigo'           => 'texto',
+        'nombre'           => 'texto',
+        'marca_nombre'     => 'texto',
+        'categoria_nombre' => 'texto',
+        'modelo'           => 'texto',
+        'updated_by'       => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'created_at'       => 'texto',
+        'updated_at'       => 'texto',
+    ];
 
     /** Dónde viven las imágenes dentro de storage/app/public. */
     private const CARPETA_IMAGENES = 'img/productos';
@@ -52,6 +85,7 @@ class ProductoController extends Controller
         'P0014' => 409,   // tiene dependencias
         'P0015' => 422,   // valor inválido
         'P0016' => 422,   // la marca o la categoría no existen
+        'P0019' => 404,   // el producto no está en la papelera
     ];
 
     public function __construct()
@@ -218,13 +252,19 @@ class ProductoController extends Controller
             $marca     = $request->input('marca_id');
             $categoria = $request->input('categoria_id');
 
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
+            // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
+            // las filas de la página y filtrar ahí buscaría dentro de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT, ?::BIGINT) as result',
+                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT, ?::BIGINT, ?::JSONB) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
                  (string) $request->input('search', ''),
                  ($marca === null || $marca === '') ? null : (int) $marca,
-                 ($categoria === null || $categoria === '') ? null : (int) $categoria]
+                 ($categoria === null || $categoria === '') ? null : (int) $categoria,
+                 json_encode((object) $filtros)]
             );
             $r = json_decode($result->result, true);
 
@@ -374,11 +414,9 @@ class ProductoController extends Controller
             );
             $r = json_decode($result->result, true);
 
-            foreach (($r['data']['archivos'] ?? []) as $archivo) {
-                $this->borrarImagen($archivo);
-            }
-
-            sistemaLog('info', 'Producto eliminado', ['producto_id' => $id, 'imagenes' => count($r['data']['archivos'] ?? [])]);
+            // Las imágenes se quedan: el producto va a la papelera y puede
+            // volver con ellas. Se borran en eliminarDefinitivo / vaciarPapelera.
+            sistemaLog('info', 'Producto enviado a la papelera', ['producto_id' => $id]);
             return $this->successResponse($r['data'], $r['message']);
 
         } catch (QueryException $e) {
@@ -566,6 +604,100 @@ class ProductoController extends Controller
             ]);
         } catch (Exception $e) {
             return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» un producto es un borrado lógico: acaba aquí sin salir en
+    // ningún listado ni poder elegirse. Desde aquí se restaura tal como
+    // estaba —con sus imágenes— o se borra de verdad.
+
+    /** Productos que están en la papelera (más reciente primero). */
+    public function papelera()
+    {
+        try {
+            $result = DB::selectOne('SELECT inventarios.fn_productos_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+
+            if (isset($r['success']) && $r['success'] === false) {
+                return $this->errorResponse($r['message'], 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de productos', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Saca de la papelera uno o varios productos. Body: { ids: [..] } */
+    public function restaurarProductos(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_productos_restaurar', 'restaurarProductos');
+    }
+
+    /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+    public function eliminarDefinitivo(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_productos_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    /** Borrado real de TODO lo que hay en la papelera. */
+    public function vaciarPapelera(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_productos_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /**
+     * El tronco común de restaurar / eliminar definitivo / vaciar.
+     *
+     * Las tres hacen lo mismo salvo la función que llaman y si llevan ids:
+     * validar, llamar, borrar del disco los ficheros que devuelva la base
+     * —la base no puede tocar storage— y traducir el error.
+     */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        try {
+            $auditoria = $this->auditoria($request);
+
+            if ($conIds) {
+                $validator = Validator::make($request->all(), [
+                    'ids'   => 'required|array|min:1|max:500',
+                    'ids.*' => 'integer',
+                ], [
+                    'ids.required' => 'No se indicó ningún producto',
+                ]);
+                if ($validator->fails()) {
+                    return $this->errorResponse($validator->errors()->first(), 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, " . self::CASTS_AUDIT . ") as result",
+                    array_merge([json_encode(array_map('intval', $validator->validated()['ids']))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}(" . self::CASTS_AUDIT . ") as result", $auditoria);
+            }
+            $r = json_decode($result->result, true);
+
+            // Ya borrados en la base: fuera sus imágenes del disco
+            foreach ($r['data']['ficheros'] ?? [] as $fichero) {
+                $this->borrarImagen($fichero);
+            }
+
+            sistemaLog('info', "Papelera de productos: {$nombre}", ['data' => $r['data'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado",
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de productos', 500);
         }
     }
 }
