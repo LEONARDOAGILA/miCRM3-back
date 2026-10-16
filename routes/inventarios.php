@@ -32,7 +32,13 @@ Route::group([
     Route::post('editCategoria/{id}',    [CategoriaController::class, 'editCategoria']);
     Route::post('activarCategoria/{id}', [CategoriaController::class, 'activarCategoria']); // { activo? }; sin ella, alterna
     Route::post('moverCategoria/{id}',   [CategoriaController::class, 'moverCategoria']);   // { padre_id, antes_de }
-    Route::delete('deleteCategoria/{id}',[CategoriaController::class, 'deleteCategoria']);
+    Route::delete('deleteCategoria/{id}',[CategoriaController::class, 'deleteCategoria']);   // a la papelera
+
+    // Papelera de reciclaje (borrado lógico: deleteCategoria manda a la papelera)
+    Route::get('papelera', [CategoriaController::class, 'papelera']);
+    Route::post('restaurarCategorias', [CategoriaController::class, 'restaurarCategorias']); // { ids: [...] }
+    Route::post('eliminarDefinitivo', [CategoriaController::class, 'eliminarDefinitivo']);   // { ids: [...] }
+    Route::delete('vaciarPapelera', [CategoriaController::class, 'vaciarPapelera']);
 });
 
 // MARCAS
@@ -53,7 +59,13 @@ Route::group([
 Route::group([
     'prefix' => 'producto', 'middleware' => ['jwt.auth', 'usuario.activo']
 ], function () {
-    Route::get('allProductos',  [ProductoController::class, 'allProductos']);              // ?page&per_page&search&marca_id&categoria_id
+    Route::get('allProductos',  [ProductoController::class, 'allProductos']);              // ?page&per_page&search&marca_id&categoria_id&filtros
+
+    // Papelera de reciclaje (borrado lógico: deleteProducto manda a la papelera)
+    Route::get('papelera', [ProductoController::class, 'papelera']);
+    Route::post('restaurarProductos', [ProductoController::class, 'restaurarProductos']);   // { ids: [...] }
+    Route::post('eliminarDefinitivo', [ProductoController::class, 'eliminarDefinitivo']);   // { ids: [...] }
+    Route::delete('vaciarPapelera', [ProductoController::class, 'vaciarPapelera']);
     Route::get('listProductos', [ProductoController::class, 'listProductos']);             // lista simple: ?activos=0
     Route::get('findByIdProducto/{id}', [ProductoController::class, 'findByIdProducto']);  // incluye la galería
     Route::post('addProducto',          [ProductoController::class, 'addProducto']);
