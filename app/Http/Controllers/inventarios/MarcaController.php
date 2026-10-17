@@ -32,6 +32,33 @@ use App\Http\Resources\ApiResponder;
 class MarcaController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de marcas, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `activo` y `logo` se quedan fuera a propósito: en la rejilla son una
+     * casilla y una imagen, y escribir texto para filtrarlos no se entiende.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'            => 'numero',
+        'num_productos' => 'numero',
+        'nombre'        => 'texto',
+        'pais_origen'   => 'texto',
+        'sitio_web'     => 'texto',
+        'descripcion'   => 'texto',
+        'created_by'    => 'texto',
+        'updated_by'    => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'created_at'    => 'texto',
+        'updated_at'    => 'texto',
+    ];
 
     /** Dónde viven los logos dentro de storage/app/public. */
     private const CARPETA_LOGOS = 'img/marcas';
@@ -47,7 +74,8 @@ class MarcaController extends Controller
         'P0014' => 409,   // no se puede eliminar: tiene productos
         'P0015' => 422,   // valor inválido
         'P0016' => 422,   // la referencia no existe
-    ];
+            'P0019' => 404,   // la marca no está en la papelera
+];
 
     public function __construct()
     {
@@ -150,11 +178,17 @@ class MarcaController extends Controller
     public function allMarcas(Request $request)
     {
         try {
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
+            // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
+            // las filas de la página y filtrar ahí buscaría dentro de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT inventarios.fn_marcas_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT) as result',
+                'SELECT inventarios.fn_marcas_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
-                 (string) $request->input('search', '')]
+                 (string) $request->input('search', ''),
+                 json_encode((object) $filtros)]
             );
             $r = json_decode($result->result, true);
 
@@ -315,9 +349,9 @@ class MarcaController extends Controller
             );
             $r = json_decode($result->result, true);
 
-            $this->borrarLogo($r['data']['logo'] ?? null);
-
-            sistemaLog('info', 'Marca eliminada', ['marca_id' => $id]);
+            // El logo se queda: la marca va a la papelera y puede volver con
+            // él. Se borra en eliminarDefinitivo / vaciarPapelera.
+            sistemaLog('info', 'Marca enviada a la papelera', ['marca_id' => $id]);
             return $this->successResponse($r['data'], $r['message']);
 
         } catch (QueryException $e) {
@@ -432,6 +466,98 @@ class MarcaController extends Controller
             ]);
         } catch (Exception $e) {
             return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» una marca es un borrado lógico: sale del listado y del
+    // combo y no se puede asignar a un producto. Desde la papelera se
+    // restaura o se borra de verdad.
+
+    /** Marcas que están en la papelera (más reciente primero). */
+    public function papelera()
+    {
+        try {
+            $result = DB::selectOne('SELECT inventarios.fn_marcas_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+
+            if (isset($r['success']) && $r['success'] === false) {
+                return $this->errorResponse($r['message'], 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de marcas', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Saca de la papelera una o varias marcas. Body: { ids: [..] } */
+    public function restaurarMarcas(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_marcas_restaurar', 'restaurarMarcas');
+    }
+
+    /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+    public function eliminarDefinitivo(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_marcas_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    /** Borrado real de TODO lo que hay en la papelera. */
+    public function vaciarPapelera(Request $request)
+    {
+        return $this->accionPapelera($request, 'inventarios.fn_marcas_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /**
+     * El tronco común de restaurar / eliminar definitivo / vaciar: validar,
+     * llamar, borrar del disco los logos que devuelva la base —la base no
+     * puede tocar storage— y traducir el error.
+     */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        try {
+            $auditoria = $this->auditoria($request);
+
+            if ($conIds) {
+                $validator = Validator::make($request->all(), [
+                    'ids'   => 'required|array|min:1|max:500',
+                    'ids.*' => 'integer',
+                ], [
+                    'ids.required' => 'No se indicó ninguna marca',
+                ]);
+                if ($validator->fails()) {
+                    return $this->errorResponse($validator->errors()->first(), 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, " . self::CASTS_AUDIT . ") as result",
+                    array_merge([json_encode(array_map('intval', $validator->validated()['ids']))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}(" . self::CASTS_AUDIT . ") as result", $auditoria);
+            }
+            $r = json_decode($result->result, true);
+
+            // Ya borradas en la base: fuera sus logos del disco
+            foreach ($r['data']['ficheros'] ?? [] as $fichero) {
+                $this->borrarLogo($fichero);
+            }
+
+            sistemaLog('info', "Papelera de marcas: {$nombre}", ['data' => $r['data'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado",
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de marcas', 500);
         }
     }
 }

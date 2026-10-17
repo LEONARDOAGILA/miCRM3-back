@@ -51,7 +51,13 @@ Route::group([
     Route::post('addMarca',          [MarcaController::class, 'addMarca']);
     Route::post('editMarca/{id}',    [MarcaController::class, 'editMarca']);
     Route::post('activarMarca/{id}', [MarcaController::class, 'activarMarca']);            // { activo? }; sin ella, alterna
-    Route::delete('deleteMarca/{id}',[MarcaController::class, 'deleteMarca']);
+    Route::delete('deleteMarca/{id}',[MarcaController::class, 'deleteMarca']);   // a la papelera
+
+    // Papelera de reciclaje (borrado lógico: deleteMarca manda a la papelera)
+    Route::get('papelera', [MarcaController::class, 'papelera']);
+    Route::post('restaurarMarcas', [MarcaController::class, 'restaurarMarcas']);     // { ids: [...] }
+    Route::post('eliminarDefinitivo', [MarcaController::class, 'eliminarDefinitivo']); // { ids: [...] }
+    Route::delete('vaciarPapelera', [MarcaController::class, 'vaciarPapelera']);
     Route::post('addLogo',           [MarcaController::class, 'addLogo']);                 // { MarcaId, imagen_file }
 });
 
