@@ -41,6 +41,7 @@ use App\Http\Resources\ApiResponder;
 class ProductoController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
     use \App\Http\Controllers\Concerns\FiltrosDeColumna;
 
     /**
@@ -165,7 +166,9 @@ class ProductoController extends Controller
             'codigo'         => 'required|string|min:2|max:30',
             'nombre'         => 'required|string|min:3|max:150',
             'codigo_barras'  => 'nullable|string|max:50',
-            'descripcion'    => 'nullable|string|max:4000',
+            // HTML desde el editor: las etiquetas ocupan, y la columna es
+            // `text` sin límite propio
+            'descripcion'    => 'nullable|string|max:20000',
             'marca_id'       => 'nullable|integer',
             'categoria_id'   => 'nullable|integer',
             'modelo'         => 'nullable|string|max:80',
@@ -197,6 +200,8 @@ class ProductoController extends Controller
             'precio.min'         => 'El precio no puede ser negativo',
             'iva_porcentaje.max' => 'El IVA no puede superar el 100%',
             'garantia_meses.max' => 'La garantía no puede superar los 600 meses',
+            // El editor manda HTML y el mensaje de Laravel sale en ingles
+            'descripcion.max'    => 'La descripción es demasiado larga (el formato también ocupa). Recórtela un poco.',
         ];
     }
 
@@ -642,12 +647,28 @@ class ProductoController extends Controller
     /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allProductos', 'vaciar',
+                'No tiene permiso para eliminar definitivamente productos')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'inventarios.fn_productos_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borrado real de TODO lo que hay en la papelera. */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allProductos', 'vaciar',
+                'No tiene permiso para vaciar la papelera de productos')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'inventarios.fn_productos_papelera_vaciar', 'vaciarPapelera', false);
     }
 

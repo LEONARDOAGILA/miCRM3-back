@@ -30,6 +30,7 @@ use App\Http\Resources\ApiResponder;
 class DepartamentoController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
 
     /**
      * SQLSTATE que las funciones de rh usan para las reglas de negocio.
@@ -508,12 +509,28 @@ class DepartamentoController extends Controller
     /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allDepartamentos', 'vaciar',
+                'No tiene permiso para eliminar definitivamente departamentos')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'rh.fn_departamentos_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borrado real de TODO lo que hay en la papelera. */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allDepartamentos', 'vaciar',
+                'No tiene permiso para vaciar la papelera de departamentos')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'rh.fn_departamentos_papelera_vaciar', 'vaciarPapelera', false);
     }
 

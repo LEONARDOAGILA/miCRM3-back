@@ -34,6 +34,7 @@ use App\Http\Resources\ApiResponder;
 class CategoriaController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
 
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,   // falta un dato obligatorio
@@ -43,6 +44,7 @@ class CategoriaController extends Controller
         'P0015' => 422,   // valor inválido (nivel máximo)
         'P0016' => 422,   // la categoría padre no existe
         'P0019' => 404,   // la categoría no está en la papelera
+        'P0021' => 409,   // en uso: no se le puede quitar «es transacción» con productos dentro
     ];
 
     public function __construct()
@@ -97,6 +99,8 @@ class CategoriaController extends Controller
             'descripcion' => 'nullable|string|max:2000',
             'icono'       => 'nullable|string|max:50',
             'activo'      => 'nullable|boolean',
+            // true = se le pueden colgar productos; false = solo agrupa
+            'es_transaccion' => 'nullable|boolean',
         ];
     }
 
@@ -184,7 +188,7 @@ class CategoriaController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_categorias_crear(?::VARCHAR, ?::BIGINT, ?::TEXT, ?::VARCHAR, ?::BOOLEAN, '
+                'SELECT inventarios.fn_categorias_crear(?::VARCHAR, ?::BIGINT, ?::TEXT, ?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $d['nombre'],
@@ -192,6 +196,9 @@ class CategoriaController extends Controller
                     $d['descripcion'] ?? null,
                     $d['icono'] ?? null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    // Por omision, de transaccion: la mayoria de las que se
+                    // crean son hojas donde se colgaran productos.
+                    array_key_exists('es_transaccion', $d) ? (bool) $d['es_transaccion'] : true,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -226,7 +233,7 @@ class CategoriaController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_categorias_modificar(?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, ?::BOOLEAN, '
+                'SELECT inventarios.fn_categorias_modificar(?::BIGINT, ?::VARCHAR, ?::TEXT, ?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $id,
@@ -234,6 +241,7 @@ class CategoriaController extends Controller
                     $d['descripcion'] ?? null,
                     $d['icono'] ?? null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    array_key_exists('es_transaccion', $d) ? (bool) $d['es_transaccion'] : true,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -382,12 +390,28 @@ class CategoriaController extends Controller
     /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allCategorias', 'vaciar',
+                'No tiene permiso para eliminar definitivamente categorías')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'inventarios.fn_categorias_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borrado real de TODO lo que hay en la papelera. */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allCategorias', 'vaciar',
+                'No tiene permiso para vaciar la papelera de categorías')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'inventarios.fn_categorias_papelera_vaciar', 'vaciarPapelera', false);
     }
 

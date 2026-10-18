@@ -16,6 +16,44 @@ use App\Http\Controllers\auth\EmailController;
 class UserController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de usuarios, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * Tiene que decir lo mismo que la pantalla y que la función de base: lo
+     * que esté aquí y no allí filtra por algo que no existe, y al revés pinta
+     * una caja que no filtra.
+     *
+     * `isactive` se queda fuera a propósito: en la rejilla es una casilla, y
+     * escribir texto para filtrarla no se entiende. `type_user` se filtra por
+     * el NOMBRE del tipo, que es lo que enseña el badge, no por el número.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'              => 'numero',
+        'login_user'      => 'texto',
+        'surname'         => 'texto',
+        'name'            => 'texto',
+        'email'           => 'texto',
+        'phone'           => 'texto',
+        'type_user'       => 'texto',
+        'perfil_nombre'   => 'texto',
+        'chorario_nombre' => 'texto',
+        'grupo_nombre'    => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'last_login_at'   => 'texto',
+        'created_at'      => 'texto',
+        'updated_at'      => 'texto',
+        'created_by'      => 'texto',
+        'updated_by'      => 'texto',
+    ];
 
     /**
      * SQLSTATE que las funciones de seguridad usan para las reglas de negocio.
@@ -115,10 +153,17 @@ class UserController extends Controller
             $perPage  = (int) $request->input('per_page', 15);
             $search   = $request->input('search', '');
             
-            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_paginado(?, ?, ?) as result', [
+            // Los filtros de la cabecera de la rejilla. Se aplican EN LA BASE
+            // y no en el navegador: la pantalla pagina, así que ag-Grid sólo
+            // tiene las filas de la página y filtrar ahí buscaría dentro de
+            // quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_paginado(?, ?, ?, ?::JSONB) as result', [
                 $page,
                 $perPage,
-                $search
+                $search,
+                json_encode((object) $filtros)
             ]);
             
             $resultado = json_decode($result->result, true);
@@ -127,6 +172,7 @@ class UserController extends Controller
                 'total_registros' => $resultado['meta']['total'] ?? 0,
                 'pagina'          => $page,
                 'busqueda'        => $search,
+                'filtros'         => array_keys($filtros),
                 'usuario'         => auth('api')->user()->login_user ?? 'desconocido',
                 'ip'              => request()->ip()
             ]);
@@ -1052,8 +1098,14 @@ public function addImagen(Request $request)
             $perPage   = (int) $request->input('per_page', 15);
             $search    = $request->input('search', '');
 
-            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_por_grupo(?::BIGINT, ?::BOOLEAN, ?, ?, ?) as result', [
-                $grupoId, $subgrupos ? 'true' : 'false', $page, $perPage, $search
+            // Los filtros de la cabecera de la rejilla. La lista blanca es la
+            // MISMA del listado de usuarios: filtrar por «Perfil» tiene que
+            // significar lo mismo en las dos pantallas.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_por_grupo(?::BIGINT, ?::BOOLEAN, ?, ?, ?, ?::JSONB) as result', [
+                $grupoId, $subgrupos ? 'true' : 'false', $page, $perPage, $search,
+                json_encode((object) $filtros)
             ]);
             $resultado = json_decode($result->result, true);
 
@@ -1153,12 +1205,28 @@ public function addImagen(Request $request)
     /** Borra de verdad uno o varios usuarios de la papelera (y sus fotos). Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allUsuarios', 'vaciar',
+                'No tiene permiso para eliminar definitivamente usuarios')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'seguridad.fn_usuarios_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borra de verdad todo lo que hay en la papelera (y sus fotos). */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allUsuarios', 'vaciar',
+                'No tiene permiso para vaciar la papelera de usuarios')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'seguridad.fn_usuarios_papelera_vaciar', 'vaciarPapelera', false);
     }
 

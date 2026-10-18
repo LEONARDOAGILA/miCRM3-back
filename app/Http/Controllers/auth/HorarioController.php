@@ -5,6 +5,7 @@ namespace App\Http\Controllers\auth;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -13,6 +14,28 @@ use Exception;
 class HorarioController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de horarios, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `activo` se queda fuera a propósito: en la rejilla es una casilla, y
+     * escribir texto para filtrarla no se entiende.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'     => 'numero',
+        'nombre' => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'created_at' => 'texto',
+        'updated_at' => 'texto',
+    ];
 
     // ****** LISTAR HORARIOS PAGINADOS ****** //
     public function allHorarios(Request $request)
@@ -22,10 +45,16 @@ class HorarioController extends Controller
             $perPage  = (int) $request->input('per_page', 15);
             $search   = $request->input('search', '');
             
-            $result = DB::selectOne('SELECT seguridad.fn_horarios_listar_paginado(?, ?, ?) as result', [
+            // Los filtros de la cabecera de la rejilla. Se aplican EN LA BASE
+            // y no en el navegador: la pantalla pagina, así que ag-Grid sólo
+            // tiene las filas de la página y filtrar ahí buscaría dentro de diez.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+            $result = DB::selectOne('SELECT seguridad.fn_horarios_listar_paginado(?, ?, ?, ?::JSONB) as result', [
                 $page,
                 $perPage,
-                $search
+                $search,
+                json_encode((object) $filtros),
             ]);
             
             $resultado = json_decode($result->result, true);
@@ -402,6 +431,128 @@ public function findByIdProfile($id)
                 'horario_id' => $id
             ]);
             return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» un horario ya no lo borra: lo manda a la papelera CON SUS
+    // DÍAS, y desde allí se restaura tal cual o se borra de verdad. Un
+    // horario son siete franjas con sus horas, y rehacerlas a mano es un rato.
+    //
+    // Un horario en uso (usuarios o grupos) no llega ni a la papelera: la
+    // función lo rechaza con P0021 y dice cuántos lo usan.
+
+    /** Horarios que están en la papelera (más reciente primero). */
+    public function papeleraHorarios()
+    {
+        try {
+            $result = DB::selectOne('SELECT seguridad.fn_horarios_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                return $this->errorResponse($r['message'] ?? 'No se pudo listar la papelera', 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papeleraHorarios', [
+                'message' => $e->getMessage(), 'line' => $e->getLine(),
+            ]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Saca de la papelera uno o varios horarios. Body: { ids: [..] } */
+    public function restaurarHorarios(Request $request)
+    {
+        return $this->accionPapeleraHorarios($request, 'seguridad.fn_horarios_restaurar', 'restaurarHorarios');
+    }
+
+    /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+    public function eliminarDefinitivoHorarios(Request $request)
+    {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar», que es
+        // otro distinto de «papelera». Se comprueba AQUÍ y no sólo en el
+        // front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allHorarios', 'vaciar',
+                'No tiene permiso para eliminar definitivamente horarios')) {
+            return $no;
+        }
+
+        return $this->accionPapeleraHorarios($request, 'seguridad.fn_horarios_eliminar_definitivo', 'eliminarDefinitivoHorarios');
+    }
+
+    /** Borrado real de TODO lo que hay en la papelera. */
+    public function vaciarPapeleraHorarios(Request $request)
+    {
+        if ($no = $this->exigirPermiso('allHorarios', 'vaciar',
+                'No tiene permiso para vaciar la papelera de horarios')) {
+            return $no;
+        }
+
+        return $this->accionPapeleraHorarios($request, 'seguridad.fn_horarios_papelera_vaciar', 'vaciarPapeleraHorarios', false);
+    }
+
+    /**
+     * El tronco común de restaurar / eliminar definitivo / vaciar: validar,
+     * llamar con el contexto de auditoría y traducir el error de negocio.
+     *
+     *   P0021  el horario está en uso   -> 409
+     *   P0022  no está en la papelera   -> 404
+     */
+    private function accionPapeleraHorarios(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        try {
+            $usuario = auth('api')->user();
+            $auditoria = [
+                $usuario->id ?? null,
+                $usuario->login_user ?? null,
+                trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid(),
+            ];
+            $casts = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
+
+            if ($conIds) {
+                $ids = $request->input('ids');
+                if (!is_array($ids) || count($ids) === 0) {
+                    return $this->errorResponse('No se indicó ningún horario', 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, {$casts}) as result",
+                    array_merge([json_encode(array_map('intval', $ids))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}({$casts}) as result", $auditoria);
+            }
+
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                return $this->errorResponse($r['message'] ?? 'No se pudo completar la acción', 400);
+            }
+
+            sistemaLog('info', "Papelera de horarios: {$nombre}", ['data' => $r['data'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            $sqlstate = $e->errorInfo[0] ?? null;
+            $codigo = $sqlstate === 'P0021' ? 409 : ($sqlstate === 'P0022' ? 404 : 500);
+            $mensaje = $e->errorInfo[2] ?? 'No se pudo completar la acción';
+            $mensaje = trim(preg_replace('/^ERROR:\s*/', '', explode("\n", $mensaje)[0]));
+
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado", [
+                'sqlstate' => $sqlstate, 'message' => $e->getMessage(),
+            ]);
+            return $this->errorResponse($mensaje, $codigo);
+
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de horarios', 500);
         }
     }
 }

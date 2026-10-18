@@ -43,6 +43,35 @@ use App\Events\BoletinPublicado;
 class BoletinController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de boletines, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `activo` se queda fuera a propósito: en la rejilla es una casilla, y
+     * escribir texto para filtrarla no se entiende; además «Estado» ya
+     * distingue el inactivo. `estado` no es una columna de la tabla sino un
+     * cálculo con las fechas, y se filtra por lo que se ve.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'           => 'numero',
+        'orden'        => 'numero',
+        'num_imagenes' => 'numero',
+        'num_usuarios' => 'numero',
+        'num_vistos'   => 'numero',
+        'titulo'       => 'texto',
+        'estado'       => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'desde'        => 'texto',
+        'hasta'        => 'texto',
+    ];
 
     /** Carpeta dentro del disco `public` donde van los archivos del carrusel. */
     private const CARPETA = 'img/boletines';
@@ -131,13 +160,20 @@ class BoletinController extends Controller
     public function allBoletines(Request $request)
     {
         try {
+            // Los filtros de la cabecera de la rejilla. Se aplican EN LA BASE
+            // y no en el navegador: la pantalla pagina, así que ag-Grid sólo
+            // tiene las filas de la página y filtrar ahí buscaría dentro de
+            // diez. El combo de estado de la barra sigue aparte y se suma.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT core.fn_boletines_listar_paginado(?, ?, ?, ?::TEXT) as result',
+                'SELECT core.fn_boletines_listar_paginado(?, ?, ?, ?::TEXT, ?::JSONB) as result',
                 [
                     (int) $request->input('page', 1),
                     (int) $request->input('per_page', 15),
                     $request->input('search', ''),
                     $request->input('estado', 'TODOS'),
+                    json_encode((object) $filtros),
                 ]
             );
             return $this->successResponse(json_decode($result->result, true), 'La solicitud ha tenido éxito');
@@ -497,6 +533,14 @@ class BoletinController extends Controller
     /** Borra de verdad un boletín de la papelera, con sus imágenes del disco. */
     public function eliminarDefinitivo(Request $request, $id)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('boletines', 'vaciar',
+                'No tiene permiso para eliminar definitivamente boletines')) {
+            return $no;
+        }
+
         DB::beginTransaction();
         try {
             $result = DB::selectOne(
@@ -521,6 +565,14 @@ class BoletinController extends Controller
 
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('boletines', 'vaciar',
+                'No tiene permiso para vaciar la papelera de boletines')) {
+            return $no;
+        }
+
         DB::beginTransaction();
         try {
             $result = DB::selectOne(
