@@ -16,6 +16,7 @@ use App\Http\Controllers\auth\EmailController;
 class UserController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
     use \App\Http\Controllers\Concerns\FiltrosDeColumna;
 
     /**
@@ -1097,8 +1098,14 @@ public function addImagen(Request $request)
             $perPage   = (int) $request->input('per_page', 15);
             $search    = $request->input('search', '');
 
-            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_por_grupo(?::BIGINT, ?::BOOLEAN, ?, ?, ?) as result', [
-                $grupoId, $subgrupos ? 'true' : 'false', $page, $perPage, $search
+            // Los filtros de la cabecera de la rejilla. La lista blanca es la
+            // MISMA del listado de usuarios: filtrar por «Perfil» tiene que
+            // significar lo mismo en las dos pantallas.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+            $result = DB::selectOne('SELECT seguridad.fn_usuarios_listar_por_grupo(?::BIGINT, ?::BOOLEAN, ?, ?, ?, ?::JSONB) as result', [
+                $grupoId, $subgrupos ? 'true' : 'false', $page, $perPage, $search,
+                json_encode((object) $filtros)
             ]);
             $resultado = json_decode($result->result, true);
 
@@ -1198,12 +1205,28 @@ public function addImagen(Request $request)
     /** Borra de verdad uno o varios usuarios de la papelera (y sus fotos). Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allUsuarios', 'vaciar',
+                'No tiene permiso para eliminar definitivamente usuarios')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'seguridad.fn_usuarios_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borra de verdad todo lo que hay en la papelera (y sus fotos). */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allUsuarios', 'vaciar',
+                'No tiene permiso para vaciar la papelera de usuarios')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'seguridad.fn_usuarios_papelera_vaciar', 'vaciarPapelera', false);
     }
 

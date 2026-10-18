@@ -4,6 +4,7 @@ namespace App\Http\Controllers\auth;
 
 use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -16,6 +17,32 @@ class ProfileController extends Controller
 {
 
 use ApiResponder;
+
+use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+/**
+ * Por qué columnas deja filtrar la rejilla de perfiles, y de qué tipo.
+ *
+ * Es una lista blanca, no una comprobación: lo que mande el navegador se
+ * compara contra esto y lo que no esté se tira. El nombre de la columna acaba
+ * dentro de una consulta, y de las dos formas de evitar que eso sea un
+ * agujero —escapar o no aceptar nombres libres— ésta es la que no depende de
+ * acordarse de escapar.
+ *
+ * `activo` se queda fuera a propósito: en la rejilla es una casilla, y
+ * escribir texto para filtrarla no se entiende.
+ */
+private const COLUMNAS_FILTRABLES = [
+    'id'          => 'numero',
+    'inactividad' => 'numero',
+    'nombre'      => 'texto',
+    'created_by'  => 'texto',
+    'updated_by'  => 'texto',
+    // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+    'created_at'  => 'texto',
+    'updated_at'  => 'texto',
+];
 
 
 public function __construct() {
@@ -152,6 +179,7 @@ public function findByProgramProfile($perfil, $programa)
                 a.reporte,
                 a.auditar,
                 a.papelera,
+                a.vaciar,
                 a.ejecutar,
                 a.created_at,
                 a.updated_at,
@@ -216,6 +244,7 @@ public function findByIdProfileAccess($id)
                 a.ejecutar,
                 a.auditar,
                 a.papelera,
+                a.vaciar,
                 a.created_at,
                 a.updated_at,
                 m.id as menu_id,
@@ -250,6 +279,7 @@ public function findByIdProfileAccess($id)
                 'ejecutar' => (bool) $acceso->ejecutar,
                 'auditar' => (bool) $acceso->auditar,
                 'papelera' => (bool) $acceso->papelera,
+                'vaciar'   => (bool) $acceso->vaciar,
                 'created_at' => $acceso->created_at,
                 'updated_at' => $acceso->updated_at,
                 'menu' => (object) [
@@ -290,10 +320,16 @@ public function allProfiles(Request $request)
         $perPage  = (int) $request->input('per_page', 15);
         $search   = $request->input('search', '');
         
-        $result = DB::selectOne('SELECT seguridad.fn_perfiles_listar_paginado(?, ?, ?) as result', [
+        // Los filtros de la cabecera de la rejilla. Se aplican EN LA BASE y no
+        // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene las
+        // filas de la página y filtrar ahí buscaría dentro de diez.
+        $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+        $result = DB::selectOne('SELECT seguridad.fn_perfiles_listar_paginado(?, ?, ?, ?::JSONB) as result', [
             $page,
             $perPage,
-            $search
+            $search,
+            json_encode((object) $filtros)
         ]);
         
         $resultado = json_decode($result->result, true);
@@ -436,6 +472,7 @@ public function addProfile(Request $request)
                 'ejecutar' => (bool)($acceso['ejecutar'] ?? false),
                 'auditar'  => (bool)($acceso['auditar'] ?? false),
                 'papelera' => (bool)($acceso['papelera'] ?? false),
+                'vaciar'   => (bool)($acceso['vaciar'] ?? false),
             ];
         }, $validatedData['acceso']);
         
@@ -599,6 +636,7 @@ public function editProfile(Request $request, $id)
                 'ejecutar' => (bool)($acceso['ejecutar'] ?? false),
                 'auditar'  => (bool)($acceso['auditar'] ?? false),
                 'papelera' => (bool)($acceso['papelera'] ?? false),
+                'vaciar'   => (bool)($acceso['vaciar'] ?? false),
             ];
         }, $validatedData['acceso']);
         
@@ -773,6 +811,7 @@ public function clonProfile(Request $request)
                 'ejecutar' => (bool)($acceso['ejecutar'] ?? false),
                 'auditar'  => (bool)($acceso['auditar'] ?? false),
                 'papelera' => (bool)($acceso['papelera'] ?? false),
+                'vaciar'   => (bool)($acceso['vaciar'] ?? false),
             ];
         }, $validatedData['acceso']);
         
@@ -1021,8 +1060,136 @@ public function miVisibilidad()
 }
 
 
+
+// ================================================================
+// PAPELERA DE RECICLAJE
+// ================================================================
+//
+// «Eliminar» un perfil ya no lo borra: lo manda a la papelera CON SUS
+// ACCESOS, y desde allí se restaura tal cual o se borra de verdad. Un perfil
+// son sus permisos pantalla por pantalla, y rehacerlos a mano es media tarde.
+//
+// Un perfil en uso (usuarios o grupos) no llega ni a la papelera: la función
+// lo rechaza con P0021 y dice cuántos lo usan.
+
+/** Perfiles que están en la papelera (más reciente primero). */
+public function papeleraProfiles()
+{
+    try {
+        $result = DB::selectOne('SELECT seguridad.fn_perfiles_papelera_listar() as result');
+        $r = json_decode($result->result, true);
+
+        if (!($r['success'] ?? false)) {
+            return $this->errorResponse($r['message'] ?? 'No se pudo listar la papelera', 500);
+        }
+        return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+    } catch (Exception $e) {
+        sistemaLog('error', 'Error en papeleraProfiles', [
+            'message' => $e->getMessage(), 'line' => $e->getLine(),
+        ]);
+        return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+    }
 }
 
+/** Saca de la papelera uno o varios perfiles. Body: { ids: [..] } */
+public function restaurarProfiles(Request $request)
+{
+    return $this->accionPapeleraPerfiles($request, 'seguridad.fn_perfiles_restaurar', 'restaurarProfiles');
+}
+
+/** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+public function eliminarDefinitivoProfiles(Request $request)
+{
+    // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+    // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+    // sólo en el front: esconder el botón no es un permiso.
+    if ($no = $this->exigirPermiso('allProfiles', 'vaciar',
+            'No tiene permiso para eliminar definitivamente perfiles')) {
+        return $no;
+    }
+
+    return $this->accionPapeleraPerfiles($request, 'seguridad.fn_perfiles_eliminar_definitivo', 'eliminarDefinitivoProfiles');
+}
+
+/** Borrado real de TODO lo que hay en la papelera. */
+public function vaciarPapeleraProfiles(Request $request)
+{
+    // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+    // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+    // sólo en el front: esconder el botón no es un permiso.
+    if ($no = $this->exigirPermiso('allProfiles', 'vaciar',
+            'No tiene permiso para vaciar la papelera de perfiles')) {
+        return $no;
+    }
+
+    return $this->accionPapeleraPerfiles($request, 'seguridad.fn_perfiles_papelera_vaciar', 'vaciarPapeleraProfiles', false);
+}
+
+/**
+ * El tronco común de restaurar / eliminar definitivo / vaciar: validar,
+ * llamar con el contexto de auditoría y traducir el error de negocio.
+ *
+ * Las funciones lanzan RAISE EXCEPTION para que PostgreSQL deshaga la
+ * transacción; aquí sólo se traduce el SQLSTATE a un código HTTP:
+ *   P0021  el perfil está en uso          -> 409
+ *   P0022  no está en la papelera         -> 404
+ */
+private function accionPapeleraPerfiles(Request $request, string $funcion, string $nombre, bool $conIds = true)
+{
+    try {
+        $usuario = auth('api')->user();
+        $auditoria = [
+            $usuario->id ?? null,
+            $usuario->login_user ?? null,
+            trim(($usuario->name ?? '') . ' ' . ($usuario->surname ?? '')) ?: null,
+            $request->ip(),
+            $request->userAgent(),
+            (string) Str::uuid(),
+        ];
+        $casts = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
+
+        if ($conIds) {
+            $ids = $request->input('ids');
+            if (!is_array($ids) || count($ids) === 0) {
+                return $this->errorResponse('No se indicó ningún perfil', 422);
+            }
+            $result = DB::selectOne(
+                "SELECT {$funcion}(?::JSONB, {$casts}) as result",
+                array_merge([json_encode(array_map('intval', $ids))], $auditoria)
+            );
+        } else {
+            $result = DB::selectOne("SELECT {$funcion}({$casts}) as result", $auditoria);
+        }
+
+        $r = json_decode($result->result, true);
+
+        if (!($r['success'] ?? false)) {
+            return $this->errorResponse($r['message'] ?? 'No se pudo completar la acción', 400);
+        }
+
+        sistemaLog('info', "Papelera de perfiles: {$nombre}", ['data' => $r['data'] ?? null]);
+        return $this->successResponse($r['data'], $r['message']);
+
+    } catch (QueryException $e) {
+        $sqlstate = $e->errorInfo[0] ?? null;
+        $codigo = $sqlstate === 'P0021' ? 409 : ($sqlstate === 'P0022' ? 404 : 500);
+        // El mensaje de la función viene dentro del texto del error de PDO
+        $mensaje = $e->errorInfo[2] ?? 'No se pudo completar la acción';
+        $mensaje = trim(preg_replace('/^ERROR:\s*/', '', explode("\n", $mensaje)[0]));
+
+        sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado", [
+            'sqlstate' => $sqlstate, 'message' => $e->getMessage(),
+        ]);
+        return $this->errorResponse($mensaje, $codigo);
+
+    } catch (Exception $e) {
+        sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+        return $this->errorResponse('Ocurrió un error en la papelera de perfiles', 500);
+    }
+}
+
+}
 
 // public function allProfiles2(Request $request)
 // {

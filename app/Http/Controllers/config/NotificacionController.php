@@ -39,6 +39,32 @@ use App\Events\NotificacionRecibida;
 class NotificacionController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de notificaciones, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `tipo` se filtra por el nombre que sale en la rejilla (Información,
+     * Éxito, Aviso, Problema), no por lo que guarda la tabla.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'         => 'numero',
+        'leidas'     => 'numero',
+        'titulo'     => 'texto',
+        'mensaje'    => 'texto',
+        'tipo'       => 'texto',
+        'origen'     => 'texto',
+        'created_by' => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'created_at' => 'texto',
+        'caduca_at'  => 'texto',
+    ];
 
     /** Pusher no admite más de 100 canales por evento. */
     private const CANALES_POR_ENVIO = 90;
@@ -107,13 +133,19 @@ class NotificacionController extends Controller
     public function allNotificaciones(Request $request)
     {
         try {
+            // Los filtros de la cabecera de la rejilla. Se aplican EN LA BASE
+            // y no en el navegador: la pantalla pagina, así que ag-Grid sólo
+            // tiene las filas de la página. El combo de tipo sigue aparte.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT core.fn_notificaciones_listar_paginado(?, ?, ?, ?::TEXT) as result',
+                'SELECT core.fn_notificaciones_listar_paginado(?, ?, ?, ?::TEXT, ?::JSONB) as result',
                 [
                     (int) $request->input('page', 1),
                     (int) $request->input('per_page', 15),
                     $request->input('search', ''),
                     $request->input('tipo', 'TODOS'),
+                    json_encode((object) $filtros),
                 ]
             );
             return $this->successResponse(json_decode($result->result, true), 'La solicitud ha tenido éxito');

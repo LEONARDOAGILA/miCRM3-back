@@ -66,7 +66,13 @@ Route::group([
     Route::post('editProfile/{id}', [ProfileController::class, 'editProfile']);
     Route::post('activarProfile/{id}', [ProfileController::class, 'activarProfile']);   // { activo? }; sin ella, alterna
     Route::post('editVisibilidadPerfil/{id}', [ProfileController::class, 'editVisibilidadPerfil']);
-    Route::delete('deleteProfile/{id}', [ProfileController::class, 'deleteProfile']);
+    Route::delete('deleteProfile/{id}', [ProfileController::class, 'deleteProfile']);   // a la papelera
+
+    // Papelera de reciclaje (deleteProfile manda a la papelera, con sus accesos)
+    Route::get('papeleraProfiles', [ProfileController::class, 'papeleraProfiles']);
+    Route::post('restaurarProfiles', [ProfileController::class, 'restaurarProfiles']);               // { ids: [...] }
+    Route::post('eliminarDefinitivoProfiles', [ProfileController::class, 'eliminarDefinitivoProfiles']); // { ids: [...] }
+    Route::delete('vaciarPapeleraProfiles', [ProfileController::class, 'vaciarPapeleraProfiles']);
     Route::post('clonProfile', [ProfileController::class, 'clonProfile']);
 });
 
@@ -154,7 +160,13 @@ Route::group([
     Route::post('/addHorario', [HorarioController::class, 'addHorario']);
     Route::post('/editHorario/{id}', [HorarioController::class, 'editHorario']);
     Route::post('/activarHorario/{id}', [HorarioController::class, 'activarHorario']);   // { activo? }; sin ella, alterna
-    Route::delete('/deleteHorario/{id}', [HorarioController::class, 'deleteHorario']);
+    Route::delete('/deleteHorario/{id}', [HorarioController::class, 'deleteHorario']);   // a la papelera
+
+    // Papelera de reciclaje (deleteHorario manda a la papelera, con sus días)
+    Route::get('/papeleraHorarios', [HorarioController::class, 'papeleraHorarios']);
+    Route::post('/restaurarHorarios', [HorarioController::class, 'restaurarHorarios']);                 // { ids: [...] }
+    Route::post('/eliminarDefinitivoHorarios', [HorarioController::class, 'eliminarDefinitivoHorarios']); // { ids: [...] }
+    Route::delete('/vaciarPapeleraHorarios', [HorarioController::class, 'vaciarPapeleraHorarios']);
 });
 
 

@@ -32,6 +32,7 @@ use App\Http\Resources\ApiResponder;
 class MarcaController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
     use \App\Http\Controllers\Concerns\FiltrosDeColumna;
 
     /**
@@ -504,12 +505,28 @@ class MarcaController extends Controller
     /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allMarcas', 'vaciar',
+                'No tiene permiso para eliminar definitivamente marcas')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'inventarios.fn_marcas_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borrado real de TODO lo que hay en la papelera. */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allMarcas', 'vaciar',
+                'No tiene permiso para vaciar la papelera de marcas')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'inventarios.fn_marcas_papelera_vaciar', 'vaciarPapelera', false);
     }
 

@@ -85,6 +85,8 @@ class ClienteController extends Controller
 
     use ApiResponder;
 
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+
     private const CARPETA_FOTOS = 'img/clientes';
 
     /** SQLSTATE de las reglas de negocio de ventas.fn_clientes_* → código HTTP. */
@@ -667,12 +669,28 @@ class ClienteController extends Controller
     /** Borra de verdad uno o varios clientes de la papelera (y sus imágenes). Body: { ids: [..] } */
     public function eliminarDefinitivo(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allClientes', 'vaciar',
+                'No tiene permiso para eliminar definitivamente clientes')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'ventas.fn_clientes_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     /** Borra de verdad todo lo que hay en la papelera (y sus imágenes). */
     public function vaciarPapelera(Request $request)
     {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar»,
+        // que es otro distinto de «papelera». Se comprueba AQUÍ y no
+        // sólo en el front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allClientes', 'vaciar',
+                'No tiene permiso para vaciar la papelera de clientes')) {
+            return $no;
+        }
+
         return $this->accionPapelera($request, 'ventas.fn_clientes_papelera_vaciar', 'vaciarPapelera', false);
     }
 
