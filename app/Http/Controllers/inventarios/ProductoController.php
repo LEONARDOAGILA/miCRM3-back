@@ -61,12 +61,13 @@ class ProductoController extends Controller
         'id'               => 'numero',
         'costo'            => 'numero',
         'precio'           => 'numero',
-        'iva_porcentaje'   => 'numero',
         'garantia_meses'   => 'numero',
         'stock_minimo'     => 'numero',
         'num_imagenes'     => 'numero',
         'codigo'           => 'texto',
         'nombre'           => 'texto',
+        // Se filtra por lo que SE VE en la celda: «Sí» / «No»
+        'impuesto'         => 'texto',
         'marca_nombre'     => 'texto',
         'categoria_nombre' => 'texto',
         'modelo'           => 'texto',
@@ -78,6 +79,10 @@ class ProductoController extends Controller
 
     /** Dónde viven las imágenes dentro de storage/app/public. */
     private const CARPETA_IMAGENES = 'img/productos';
+
+    /** Las imágenes que van DENTRO de la descripción (el editor), aparte
+     *  de la galería: no son fotos del producto, son parte del texto. */
+    private const CARPETA_DESCRIPCION = 'img/productos/descripcion';
 
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,   // falta un dato obligatorio
@@ -91,8 +96,10 @@ class ProductoController extends Controller
 
     public function __construct()
     {
-        // getImagen va suelta (la pide <img src> sin cabeceras); el resto, con token
-        $this->middleware('auth:api')->except(['getImagen']);
+        // Las dos que sirven imágenes van sueltas (las pide un <img src>, que
+        // no manda cabecera Authorization): la de la galería y la de las que
+        // van dentro de la descripción. El resto, con token.
+        $this->middleware('auth:api')->except(['getImagen', 'getImagenDescripcion']);
     }
 
     // ================================================================
@@ -125,7 +132,7 @@ class ProductoController extends Controller
         ?::VARCHAR,   -- p_unidad
         ?::NUMERIC,   -- p_costo
         ?::NUMERIC,   -- p_precio
-        ?::NUMERIC,   -- p_iva_porcentaje
+        ?::BOOLEAN,   -- p_impuesto (antes era el % de IVA)
         ?::BOOLEAN,   -- p_maneja_stock
         ?::NUMERIC,   -- p_stock_minimo
         ?::NUMERIC,   -- p_stock_maximo
@@ -175,7 +182,8 @@ class ProductoController extends Controller
             'unidad'         => 'nullable|string|max:15',
             'costo'          => 'nullable|numeric|min:0',
             'precio'         => 'nullable|numeric|min:0',
-            'iva_porcentaje' => 'nullable|numeric|min:0|max:100',
+            // Sólo SI grava; la tarifa vendrá de las tablas de impuestos
+            'impuesto'       => 'nullable|boolean',
             'maneja_stock'   => 'nullable|boolean',
             'stock_minimo'   => 'nullable|numeric|min:0',
             'stock_maximo'   => 'nullable|numeric|min:0',
@@ -186,7 +194,35 @@ class ProductoController extends Controller
             'ancho_cm'       => 'nullable|numeric|min:0',
             'profundidad_cm' => 'nullable|numeric|min:0',
             'activo'         => 'nullable|boolean',
+            // Lo que se rellenó de la plantilla de la categoría:
+            //   [{ caracteristica_id, nombre, valor, orden }, …]
+            // Es opcional: una categoría puede no tener plantilla.
+            'caracteristicas'               => 'nullable|array',
+            'caracteristicas.*.nombre'      => 'required_with:caracteristicas|string|max:100',
+            'caracteristicas.*.valor'       => 'nullable|string|max:500',
+            'caracteristicas.*.caracteristica_id' => 'nullable|integer',
+            'caracteristicas.*.orden'       => 'nullable|integer',
         ];
+    }
+
+    /**
+     * Guarda las características rellenas de un producto.
+     *
+     * Va aparte de fn_productos_crear/modificar a propósito: esas funciones
+     * son grandes y tocarles la firma obligaría a soltarlas y rehacerlas.
+     * Quien llama envuelve las dos cosas en una transacción, así que o se
+     * guarda el producto con su ficha o no se guarda nada.
+     */
+    private function guardarCaracteristicas(Request $request, int $productoId, array $d): void
+    {
+        if (!array_key_exists('caracteristicas', $d)) { return; }
+
+        DB::selectOne(
+            'SELECT inventarios.fn_productos_caracteristicas_guardar(?::BIGINT, ?::JSONB, '
+            . self::CASTS_AUDIT . ') as result',
+            array_merge([$productoId, json_encode(array_values($d['caracteristicas'] ?? []))],
+                        $this->auditoria($request))
+        );
     }
 
     private function mensajes(): array
@@ -198,7 +234,6 @@ class ProductoController extends Controller
             'nombre.min'         => 'El nombre debe tener al menos 3 caracteres',
             'costo.min'          => 'El costo no puede ser negativo',
             'precio.min'         => 'El precio no puede ser negativo',
-            'iva_porcentaje.max' => 'El IVA no puede superar el 100%',
             'garantia_meses.max' => 'La garantía no puede superar los 600 meses',
             // El editor manda HTML y el mensaje de Laravel sale en ingles
             'descripcion.max'    => 'La descripción es demasiado larga (el formato también ocupa). Recórtela un poco.',
@@ -225,7 +260,7 @@ class ProductoController extends Controller
             $this->num($d['unidad'] ?? null) ?? 'UNIDAD',
             $this->num($d['costo'] ?? null) ?? 0,
             $this->num($d['precio'] ?? null) ?? 0,
-            $this->num($d['iva_porcentaje'] ?? null) ?? 15,
+            array_key_exists('impuesto', $d) ? (bool) $d['impuesto'] : true,
             array_key_exists('maneja_stock', $d) ? (bool) $d['maneja_stock'] : true,
             $this->num($d['stock_minimo'] ?? null) ?? 0,
             $this->num($d['stock_maximo'] ?? null),
@@ -327,11 +362,18 @@ class ProductoController extends Controller
             }
             $d = $validator->validated();
 
-            $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_crear(' . self::CASTS_DATOS . self::CASTS_AUDIT . ') as result',
-                array_merge($this->parametros($d), $this->auditoria($request))
-            );
-            $r = json_decode($result->result, true);
+            // El producto y su ficha de características, juntos: si lo
+            // segundo falla, lo primero tampoco se queda.
+            $r = DB::transaction(function () use ($request, $d) {
+                $result = DB::selectOne(
+                    'SELECT inventarios.fn_productos_crear(' . self::CASTS_DATOS . self::CASTS_AUDIT . ') as result',
+                    array_merge($this->parametros($d), $this->auditoria($request))
+                );
+                $r = json_decode($result->result, true);
+
+                $this->guardarCaracteristicas($request, (int) $r['data']['id'], $d);
+                return $r;
+            });
 
             sistemaLog('info', 'Producto creado', ['producto_id' => $r['data']['id'] ?? null, 'codigo' => $r['data']['codigo'] ?? null]);
             return $this->successResponse($r['data'], $r['message']);
@@ -356,11 +398,16 @@ class ProductoController extends Controller
             }
             $d = $validator->validated();
 
-            $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_modificar(?::BIGINT, ' . self::CASTS_DATOS . self::CASTS_AUDIT . ') as result',
-                array_merge([(int) $id], $this->parametros($d), $this->auditoria($request))
-            );
-            $r = json_decode($result->result, true);
+            $r = DB::transaction(function () use ($request, $id, $d) {
+                $result = DB::selectOne(
+                    'SELECT inventarios.fn_productos_modificar(?::BIGINT, ' . self::CASTS_DATOS . self::CASTS_AUDIT . ') as result',
+                    array_merge([(int) $id], $this->parametros($d), $this->auditoria($request))
+                );
+                $r = json_decode($result->result, true);
+
+                $this->guardarCaracteristicas($request, (int) $id, $d);
+                return $r;
+            });
 
             sistemaLog('info', 'Producto actualizado', ['producto_id' => $id]);
             return $this->successResponse($r['data'], $r['message']);
@@ -438,6 +485,30 @@ class ProductoController extends Controller
     // ================================================================
     // LA GALERÍA
     // ================================================================
+
+    /**
+     * Las características de un producto que YA existe.
+     *
+     * Devuelve la plantilla vigente de su categoría con lo que tenga relleno,
+     * más lo que se rellenó en su día y hoy ya no está en la plantilla
+     * (marcado con en_plantilla=false): esconderlo sería perder datos a la
+     * vista de quien edita.
+     */
+    public function caracteristicas($id)
+    {
+        try {
+            $result = DB::selectOne('SELECT inventarios.fn_productos_caracteristicas(?::BIGINT) as result', [(int) $id]);
+            $r = json_decode($result->result, true);
+            return $this->successResponse($r['data'] ?? [], 'La solicitud ha tenido éxito');
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en caracteristicas (producto)', ['message' => $e->getMessage(), 'producto_id' => $id]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
 
     public function imagenes($id)
     {
@@ -592,6 +663,89 @@ class ProductoController extends Controller
     }
 
     /** Sirve el fichero de una imagen. Pública: la pide <img src>, que no manda cabeceras. */
+    /**
+     * Sube una imagen que va DENTRO de la descripción (el editor).
+     *
+     * No es una foto de la galería: no sale en el listado ni se puede marcar
+     * como principal, y por eso no toca productos_imagenes. Va a su propia
+     * carpeta y lo único que vuelve es el nombre del fichero; en la
+     * descripción queda una <img> con su URL.
+     *
+     * POR QUÉ SUBIRLA Y NO DEJARLA EN BASE64: una foto incrustada se lleva
+     * cien mil caracteres de los 20.000 que admite la descripción, y además
+     * viajaría entera en cada listado de productos.
+     *
+     * NO SE PROCESA LA IMAGEN: en este servidor no está activada la extensión
+     * GD, así que el fichero se guarda tal cual llega.
+     */
+    public function subirImagenDescripcion(Request $request)
+    {
+        try {
+            if (!$request->hasFile('imagen') || !$request->file('imagen')->isValid()) {
+                return $this->errorResponse(
+                    'No se recibió la imagen. Si es muy grande, revise upload_max_filesize y post_max_size en php.ini', 422);
+            }
+
+            $fichero   = $request->file('imagen');
+            $extension = strtolower($fichero->getClientOriginalExtension());
+            // Sólo imágenes: esto va dentro de un <img>, y cualquier otra cosa
+            // ahí sale rota en vez de dar un error que se entienda
+            if (!in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'avif'], true)) {
+                return $this->errorResponse('Sólo se pueden insertar imágenes (jpg, png, gif, webp)', 422);
+            }
+
+            $base   = Str::slug(pathinfo($fichero->getClientOriginalName(), PATHINFO_FILENAME)) ?: 'imagen';
+            $nombre = 'desc-' . substr($base, 0, 40) . '-' . date('Ymd-His') . '-' . Str::lower(Str::random(6)) . '.' . $extension;
+
+            if (!$fichero->storeAs('public/' . self::CARPETA_DESCRIPCION, $nombre)) {
+                return $this->errorResponse('No se pudo guardar la imagen en el servidor', 500);
+            }
+
+            $ruta = storage_path('app/public/' . self::CARPETA_DESCRIPCION . '/' . $nombre);
+            if (!is_file($ruta) || filesize($ruta) === 0) {
+                if (is_file($ruta)) { @unlink($ruta); }
+                return $this->errorResponse('La imagen llegó vacía o se cortó la subida. Inténtelo de nuevo.', 422);
+            }
+
+            sistemaLog('info', 'Imagen de descripción subida', ['archivo' => $nombre]);
+            return $this->successResponse(['archivo' => $nombre], 'Imagen subida');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en subirImagenDescripcion', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Sirve una imagen de la descripción.
+     *
+     * Va suelta (sin token) como getImagen: la pide un <img src> dentro del
+     * HTML de la descripción, y ahí no hay cabecera Authorization.
+     *
+     * El nombre se comprueba contra el patrón con el que se creó: así no hay
+     * forma de pedir «../../.env» metiendo una ruta por el nombre.
+     */
+    public function getImagenDescripcion($archivo)
+    {
+        try {
+            if (!preg_match('/^desc-[A-Za-z0-9._-]{1,120}$/', (string) $archivo)) {
+                return $this->errorResponse('Nombre de imagen no válido', 400);
+            }
+
+            $ruta = storage_path('app/public/' . self::CARPETA_DESCRIPCION . '/' . $archivo);
+            if (!is_file($ruta)) {
+                return $this->errorResponse('La imagen no existe en el servidor', 404);
+            }
+
+            return response()->file($ruta, [
+                'Content-Type'  => mime_content_type($ruta),
+                'Cache-Control' => 'public, max-age=31536000',
+            ]);
+        } catch (Exception $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     public function getImagen($id)
     {
         try {

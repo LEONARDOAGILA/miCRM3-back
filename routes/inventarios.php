@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\inventarios\CaracteristicaController;
 use App\Http\Controllers\inventarios\CategoriaController;
 use App\Http\Controllers\inventarios\MarcaController;
 use App\Http\Controllers\inventarios\ProductoController;
@@ -19,6 +20,9 @@ use App\Http\Controllers\inventarios\ProductoController;
 // Ficheros (públicas, las usa <img src>)
 Route::get('marca/getLogo/{id}',      [MarcaController::class,    'getLogo']);
 Route::get('producto/getImagen/{id}', [ProductoController::class, 'getImagen']);
+// Las imagenes que van DENTRO de la descripcion: las pide un <img src> del
+// propio texto, asi que tampoco pueden llevar cabecera Authorization
+Route::get('producto/getImagenDescripcion/{archivo}', [ProductoController::class, 'getImagenDescripcion']);
 
 
 // CATEGORÍAS (árbol)
@@ -61,6 +65,26 @@ Route::group([
     Route::post('addLogo',           [MarcaController::class, 'addLogo']);                 // { MarcaId, imagen_file }
 });
 
+// CARACTERÍSTICAS (la plantilla de cada categoría)
+Route::group([
+    'prefix' => 'caracteristica', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allCaracteristicas',  [CaracteristicaController::class, 'allCaracteristicas']);   // ?page&per_page&search&categoria_id&filtros
+    Route::get('listCaracteristicas', [CaracteristicaController::class, 'listCaracteristicas']);  // la plantilla: ?categoria_id&activos=1
+    Route::get('findByIdCaracteristica/{id}', [CaracteristicaController::class, 'findByIdCaracteristica']);
+    Route::post('addCaracteristica',          [CaracteristicaController::class, 'addCaracteristica']);
+    Route::post('editCaracteristica/{id}',    [CaracteristicaController::class, 'editCaracteristica']);
+    Route::post('activarCaracteristica/{id}', [CaracteristicaController::class, 'activarCaracteristica']); // { activo? }; sin ella, alterna
+    Route::post('ordenarCaracteristicas',     [CaracteristicaController::class, 'ordenarCaracteristicas']); // { ids: [...] } en el orden nuevo
+    Route::delete('deleteCaracteristica/{id}',[CaracteristicaController::class, 'deleteCaracteristica']);  // a la papelera
+
+    // Papelera de reciclaje
+    Route::get('papelera', [CaracteristicaController::class, 'papelera']);
+    Route::post('restaurar',          [CaracteristicaController::class, 'restaurar']);           // { ids: [...] }
+    Route::post('eliminarDefinitivo', [CaracteristicaController::class, 'eliminarDefinitivo']);  // { ids: [...] }
+    Route::delete('vaciarPapelera',   [CaracteristicaController::class, 'vaciarPapelera']);
+});
+
 // PRODUCTOS
 Route::group([
     'prefix' => 'producto', 'middleware' => ['jwt.auth', 'usuario.activo']
@@ -79,9 +103,13 @@ Route::group([
     Route::post('activarProducto/{id}', [ProductoController::class, 'activarProducto']);   // { activo? }; sin ella, alterna
     Route::delete('deleteProducto/{id}',[ProductoController::class, 'deleteProducto']);
 
+    // Lo relleno de la plantilla de su categoría
+    Route::get('caracteristicas/{id}',   [ProductoController::class, 'caracteristicas']);
+
     // La galería
     Route::get('imagenes/{id}',          [ProductoController::class, 'imagenes']);
-    Route::post('addImagen',             [ProductoController::class, 'addImagen']);        // { ProductoId, imagen_file }
+    Route::post('addImagen',             [ProductoController::class, 'addImagen']);
+    Route::post('subirImagenDescripcion', [ProductoController::class, 'subirImagenDescripcion']); // { imagen } -> { archivo }        // { ProductoId, imagen_file }
     Route::post('imagenPrincipal/{id}',  [ProductoController::class, 'imagenPrincipal']);  // {id} es el de la IMAGEN
     Route::post('ordenarImagenes/{id}',  [ProductoController::class, 'ordenarImagenes']);  // { ids: [...] } en el orden nuevo
     Route::delete('deleteImagen/{id}',   [ProductoController::class, 'deleteImagen']);     // {id} es el de la IMAGEN
