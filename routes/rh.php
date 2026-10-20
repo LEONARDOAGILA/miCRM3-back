@@ -80,6 +80,10 @@ Route::group([
     Route::get('findByIdMarcacion/{id}', [MarcacionController::class, 'findByIdMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::get('resumen', [MarcacionController::class, 'resumen'])->middleware(['jwt.auth', 'usuario.activo']);                      // horas por empleado y día
     Route::post('registrar', [MarcacionController::class, 'registrar'])->middleware(['jwt.auth', 'usuario.activo']);                  // kiosco facial
+    // Desde el celular del propio empleado: el empleado sale de la sesión
+    Route::get('miEmpleado', [MarcacionController::class, 'miEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
+    Route::get('misMarcaciones', [MarcacionController::class, 'misMarcaciones'])->middleware(['jwt.auth', 'usuario.activo']);  // ?page&per_page&desde&hasta&tipo
+    Route::post('registrarMia', [MarcacionController::class, 'registrarMia'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('addMarcacion', [MarcacionController::class, 'addMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);            // alta manual
     Route::post('editMarcacion/{id}', [MarcacionController::class, 'editMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::delete('deleteMarcacion/{id}', [MarcacionController::class, 'deleteMarcacion'])->middleware(['jwt.auth', 'usuario.activo']);
