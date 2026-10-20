@@ -22,7 +22,11 @@ use App\Http\Resources\ApiResponder;
  *
  *   GET    rh/marcacion/allMarcaciones      paginado: ?page&per_page&search&desde&hasta&empleado_id&tipo&origen
  *   GET    rh/marcacion/findByIdMarcacion/{id}
- *   POST   rh/marcacion/registrar           kiosco: { empleado_id, similitud, dispositivo, foto_base64… }
+ *   POST   rh/marcacion/registrar           kiosco / celular: { empleado_id, similitud, dispositivo,
+ *                                          foto_base64, latitud, longitud, precision_m… }
+ *   GET    rh/marcacion/miEmpleado          quién soy (el empleado de mi usuario) + lo de hoy
+ *   GET    rh/marcacion/misMarcaciones     MIS marcaciones, paginadas (?page&per_page&desde&hasta&tipo)
+ *   POST   rh/marcacion/registrarMia        marco YO desde mi celular (el empleado sale de la sesión)
  *   POST   rh/marcacion/addMarcacion        alta manual (con tipo y fecha/hora)
  *   POST   rh/marcacion/editMarcacion/{id}  corregir tipo / hora / observación
  *   DELETE rh/marcacion/deleteMarcacion/{id}
@@ -167,6 +171,148 @@ class MarcacionController extends Controller
         return $this->guardar($request, false);
     }
 
+    // ================================================================
+    // DESDE MI CELULAR
+    // ================================================================
+
+    /**
+     * El empleado al que corresponde el usuario de la sesión.
+     *
+     * La pantalla del celular no pregunta a quién marcar: lo dice el
+     * servidor. Devuelve además lo de hoy, para pintar la última marcación
+     * sin una segunda llamada.
+     */
+    /**
+     * A qué empleado corresponde el usuario de la sesión.
+     *
+     * Primero el enlace de verdad (seguridad.users.empleado_id) y, si está
+     * vacío, por el correo: usuarios y empleados son dos tablas distintas y
+     * en muchas bases ese enlace no se llenó nunca. Si no se puede saber se
+     * devuelve null, y quien llama contesta explicando qué falta.
+     */
+    private function empleadoDeLaSesion(): ?int
+    {
+        $u = auth('api')->user();
+        if (!$u) { return null; }
+
+        if (!empty($u->empleado_id)) { return (int) $u->empleado_id; }
+
+        if (!empty($u->email)) {
+            $fila = DB::selectOne(
+                'SELECT id FROM rh.empleados WHERE LOWER(email) = LOWER(?) LIMIT 1',
+                [$u->email]
+            );
+            if ($fila) { return (int) $fila->id; }
+        }
+        return null;
+    }
+
+    /**
+     * Quién soy y qué he marcado hoy.
+     *
+     * La pantalla del celular no pregunta a quién marcar: lo dice el
+     * servidor. Devuelve también lo de hoy y cuántas muestras de rostro
+     * tiene el empleado, para pintarlo todo sin una segunda llamada.
+     */
+    public function miEmpleado(Request $request)
+    {
+        try {
+            $empleadoId = $this->empleadoDeLaSesion();
+            if (!$empleadoId) {
+                return $this->errorResponse(
+                    'Su usuario no está enlazado a ningún empleado: pida a Recursos Humanos que lo asocie', 409);
+            }
+
+            $ficha = DB::selectOne('SELECT rh.fn_empleados_obtener(?::BIGINT) AS result', [$empleadoId]);
+            $empleado = json_decode($ficha->result ?? '{}', true)['data'] ?? null;
+            if (!$empleado) {
+                return $this->errorResponse('El empleado enlazado a su usuario ya no existe', 404);
+            }
+
+            $hoy = DB::selectOne(
+                "SELECT COALESCE((SELECT jsonb_agg(rh.fn_marcaciones_json(m.id) ORDER BY m.fecha_hora DESC)
+                                    FROM rh.marcaciones m
+                                   WHERE m.empleado_id = ?::BIGINT AND m.fecha = CURRENT_DATE), '[]'::jsonb) AS result",
+                [$empleadoId]
+            );
+
+            $muestras = DB::selectOne(
+                'SELECT COUNT(*) AS n FROM rh.rostros_empleados WHERE empleado_id = ?::BIGINT',
+                [$empleadoId]
+            );
+
+            return $this->successResponse([
+                'empleado'        => $empleado,
+                'marcaciones_hoy' => json_decode($hoy->result, true),
+                'muestras_rostro' => (int) ($muestras->n ?? 0),
+            ], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en miEmpleado', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('No se pudo obtener su ficha de empleado', 500);
+        }
+    }
+
+    /**
+     * MIS marcaciones, paginadas y con filtro de fechas.
+     *
+     * Igual que allMarcaciones pero con el empleado puesto por la sesión: la
+     * pantalla del celular no manda a quién mirar, así nadie ve las horas de
+     * entrada y salida de un compañero cambiando un número en la petición.
+     */
+    public function misMarcaciones(Request $request)
+    {
+        $empleadoId = $this->empleadoDeLaSesion();
+        if (!$empleadoId) {
+            return $this->errorResponse(
+                'Su usuario no está enlazado a ningún empleado: pida a Recursos Humanos que lo asocie', 409);
+        }
+
+        try {
+            $result = DB::selectOne(
+                'SELECT rh.fn_marcaciones_listar_paginado(?, ?, ?, ?::DATE, ?::DATE, ?::BIGINT, ?::VARCHAR, ?::VARCHAR) as result',
+                [
+                    (int) $request->input('page', 1),
+                    (int) $request->input('per_page', 10),
+                    '',                               // el buscador no pinta aquí: son las suyas
+                    $request->input('desde') ?: null,
+                    $request->input('hasta') ?: null,
+                    $empleadoId,                      // manda la sesión
+                    $request->input('tipo') ?: null,
+                    null,
+                ]
+            );
+            return $this->successResponse(json_decode($result->result, true), 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en misMarcaciones', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar sus marcaciones', 500);
+        }
+    }
+
+    /**
+     * Marcación desde el celular del propio empleado.
+     *
+     * El empleado NO se acepta del cliente: sale de la sesión. Si no,
+     * cualquiera podría marcar por un compañero desde su propio teléfono
+     * cambiando un número en la petición.
+     */
+    public function registrarMia(Request $request)
+    {
+        $empleadoId = $this->empleadoDeLaSesion();
+        if (!$empleadoId) {
+            return $this->errorResponse(
+                'Su usuario no está enlazado a ningún empleado: pida a Recursos Humanos que lo asocie', 409);
+        }
+
+        $datos = $this->datosDe($request);
+        $datos['empleado_id'] = $empleadoId;   // manda la sesión, no el cliente
+        $datos['origen']      = 'MOVIL';
+        $request->replace($datos);
+
+        return $this->guardar($request, true);
+    }
+
     private function guardar(Request $request, bool $esKiosco)
     {
         $datos = $this->datosDe($request);
@@ -176,11 +322,13 @@ class MarcacionController extends Controller
             'origen'           => 'nullable|string|in:FACIAL,MANUAL,WEB,MOVIL',
             'similitud'        => 'nullable|numeric|min:0|max:100',
             'dispositivo'      => 'nullable|string|max:150',
-            'latitud'          => 'nullable|numeric',
-            'longitud'         => 'nullable|numeric',
+            'latitud'          => 'nullable|numeric|between:-90,90',
+            'longitud'         => 'nullable|numeric|between:-180,180',
             'observacion'      => 'nullable|string|max:1000',
             'fecha_hora'       => 'nullable|date',
             'espera_segundos'  => 'nullable|integer|min:0|max:3600',
+            // Lo que declara el GPS del aparato, en metros
+            'precision_m'      => 'nullable|numeric|min:0|max:100000',
             'foto_base64'      => 'nullable|string',
         ], [
             'empleado_id.required' => 'Falta el empleado',
@@ -197,7 +345,7 @@ class MarcacionController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT rh.fn_marcaciones_registrar(?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::NUMERIC, ?::VARCHAR, ?::NUMERIC, ?::NUMERIC, ?::VARCHAR, ?::TEXT, ?::TIMESTAMPTZ, ?::INTEGER, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT rh.fn_marcaciones_registrar(?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::NUMERIC, ?::VARCHAR, ?::NUMERIC, ?::NUMERIC, ?::VARCHAR, ?::TEXT, ?::TIMESTAMPTZ, ?::INTEGER, ?::NUMERIC, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $d['empleado_id'],
                     isset($d['tipo']) ? strtoupper($d['tipo']) : null,
@@ -211,6 +359,9 @@ class MarcacionController extends Controller
                     $d['fecha_hora'] ?? null,
                     // El kiosco trae su propia espera; a mano no se bloquea
                     $esKiosco ? (int) ($d['espera_segundos'] ?? 60) : 0,
+                    // La ubicación y su error los manda el navegador; el enlace
+                    // del mapa lo arma la función con lo que de verdad se guardó
+                    $d['precision_m'] ?? null,
                 ], $this->auditoria($request))
             );
             $resultado = json_decode($result->result, true);
