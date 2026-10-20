@@ -9,6 +9,7 @@ use App\Http\Controllers\ventas\WhatsappPlantillaController;
 use App\Http\Controllers\ventas\ArchivoClienteController;
 use App\Http\Controllers\ventas\NotaClienteController;
 use App\Http\Controllers\ventas\ZonaController;
+use App\Http\Controllers\ventas\RecorridoController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -156,4 +157,17 @@ Route::group([
     Route::post('saveZona', [ZonaController::class, 'saveZona']);                // { nombre, tipo, vertices|centro+radio, color? }
     Route::post('saveZona/{id}', [ZonaController::class, 'saveZona']);
     Route::delete('deleteZona/{id}', [ZonaController::class, 'deleteZona']);
+});
+
+// RECORRIDOS DEL COBRADOR
+// Por dónde anduvo y dónde se paró. 'registrar' lo llama el celular del propio
+// cobrador —escribe siempre sobre el usuario del token—; el resto lo llama el
+// supervisor desde la pantalla.
+Route::group([
+    'prefix' => 'recorrido', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::post('registrar', [RecorridoController::class, 'registrar']);        // { puntos:[{fecha_hora,lat,lng,...}], dispositivo? }
+    Route::get('cobradores', [RecorridoController::class, 'cobradores']);       // ?desde&hasta
+    Route::get('dias/{usuarioId}', [RecorridoController::class, 'dias']);       // ?desde&hasta
+    Route::get('delDia/{usuarioId}', [RecorridoController::class, 'delDia']);   // ?fecha&radio_parada&minutos_parada&radio_cliente
 });
