@@ -61,6 +61,8 @@ Route::group([
     Route::post('editEmpleado/{id}', [EmpleadoController::class, 'editEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
     Route::post('activarEmpleado/{id}', [EmpleadoController::class, 'activarEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);   // { activo? }; sin ella, alterna
     Route::delete('deleteEmpleado/{id}', [EmpleadoController::class, 'deleteEmpleado'])->middleware(['jwt.auth', 'usuario.activo']);
+    // Dónde trabaja: de aquí sale el perímetro que se le exige al marcar
+    Route::post('asignarSucursal/{id}', [EmpleadoController::class, 'asignarSucursal'])->middleware(['jwt.auth', 'usuario.activo']);  // { sucursal_id }
     Route::post('addImagen', [EmpleadoController::class, 'addImagen'])->middleware(['jwt.auth', 'usuario.activo']);            // { EmpleadoId, imagen_file }
     Route::get('listContactos/{id}', [EmpleadoController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // contactos de emergencia
     Route::post('guardarContactos/{id}', [EmpleadoController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza

@@ -47,6 +47,8 @@ class MarcacionController extends Controller
         'P0020' => 429,   // marcación repetida dentro de la espera
         'P0021' => 409,   // empleado inactivo
         'P0022' => 422,   // descriptor facial inválido
+        'P0024' => 422,   // fuera del perímetro de su sucursal
+        'P0025' => 422,   // su sucursal exige ubicación y no llegó ninguna
     ];
 
     public function __construct() {

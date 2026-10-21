@@ -9,6 +9,7 @@ use App\Http\Controllers\ventas\WhatsappPlantillaController;
 use App\Http\Controllers\ventas\ArchivoClienteController;
 use App\Http\Controllers\ventas\NotaClienteController;
 use App\Http\Controllers\ventas\ZonaController;
+use App\Http\Controllers\ventas\SucursalController;
 use App\Http\Controllers\ventas\RecorridoController;
 
 // ============================================================================
@@ -17,6 +18,37 @@ use App\Http\Controllers\ventas\RecorridoController;
 // usuario.activo, salvo las rutas que consume <img src> (públicas, como
 // getImagenEmpleado).
 // ============================================================================
+
+// La imagen de una sucursal va FUERA del grupo: la pide un <img src>, que no
+// manda la cabecera Authorization. El control de acceso es el id: no lista
+// nada y no dice de quién es lo que sirve, igual que getLogo de las marcas.
+Route::get('sucursal/getFoto/{id}/{campo}', [SucursalController::class, 'getFoto']);
+
+// SUCURSALES (con su perímetro en el mapa)
+Route::group([
+    'prefix' => 'sucursal', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allSucursales',  [SucursalController::class, 'allSucursales']);    // ?page&per_page&search&filtros
+    Route::get('listSucursales', [SucursalController::class, 'listSucursales']);   // lista simple: ?activas=0
+    Route::get('findByIdSucursal/{id}', [SucursalController::class, 'findByIdSucursal']);
+    Route::post('addSucursal',          [SucursalController::class, 'addSucursal']);
+    Route::post('editSucursal/{id}',    [SucursalController::class, 'editSucursal']);
+    Route::post('activarSucursal/{id}', [SucursalController::class, 'activarSucursal']);  // { activo? }; sin ella, alterna
+    Route::delete('deleteSucursal/{id}',[SucursalController::class, 'deleteSucursal']);   // a la papelera
+    // ¿Ese punto cae dentro? Lo usa la pantalla para probar el dibujo
+    Route::post('probarPunto/{id}',     [SucursalController::class, 'probarPunto']);      // { latitud, longitud }
+
+    // Las imágenes: la foto del local y la captura del mapa. Se suben DESPUÉS
+    // de guardar, porque el fichero necesita el id.
+    Route::post('addFoto',                   [SucursalController::class, 'addFoto']);     // { SucursalId, campo, imagen_file }
+    Route::delete('quitarFoto/{id}/{campo}', [SucursalController::class, 'quitarFoto']);
+
+    // Papelera de reciclaje
+    Route::get('papelera', [SucursalController::class, 'papelera']);
+    Route::post('restaurar',          [SucursalController::class, 'restaurar']);          // { ids: [...] }
+    Route::post('eliminarDefinitivo', [SucursalController::class, 'eliminarDefinitivo']); // { ids: [...] }
+    Route::delete('vaciarPapelera',   [SucursalController::class, 'vaciarPapelera']);
+});
 
 // CLIENTES
 Route::group([

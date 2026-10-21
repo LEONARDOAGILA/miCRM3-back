@@ -26,12 +26,14 @@ use App\Http\Resources\ApiResponder;
  *   POST   rh/empleado/addEmpleado
  *   POST   rh/empleado/editEmpleado/{id}
  *   DELETE rh/empleado/deleteEmpleado/{id}
+ *   POST   rh/empleado/asignarSucursal/{id} { sucursal_id } (vacío = quitársela)
  *   POST   rh/empleado/addImagen            { EmpleadoId, imagen_file }
  *   GET    rh/empleado/getImagenEmpleado/{id}  (pública, como getImagenUsuario)
  */
 class EmpleadoController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
 
     private const CARPETA_FOTOS = 'img/empleados';
 
@@ -301,6 +303,47 @@ class EmpleadoController extends Controller
      * No toca `estado`: la situacion laboral (ACTIVO, VACACIONES, LIQUIDADO) es
      * otra cosa, y en el formulario tambien se guardan por separado.
      */
+    /**
+     * Dónde trabaja: asigna (o quita) la sucursal de un empleado.
+     *
+     * Va en su propio extremo y no dentro de editEmpleado porque la ficha
+     * tiene treinta campos y esto se cambia solo, desde la rejilla, cuando
+     * alguien cambia de local. Mandar `sucursal_id` vacío se la quita.
+     */
+    public function asignarSucursal(Request $request, $id)
+    {
+        // Cambiar dónde trabaja alguien es modificar su ficha: el permiso se
+        // comprueba AQUÍ, no sólo escondiendo el botón.
+        if ($no = $this->exigirPermiso('allEmpleados', 'editar',
+                'No tiene permiso para cambiar la sucursal de un empleado')) {
+            return $no;
+        }
+
+        try {
+            $datos = $this->datosDe($request);
+            $sucursal = $datos['sucursal_id'] ?? null;
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_empleados_asignar_sucursal(?::BIGINT, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([
+                    (int) $id,
+                    ($sucursal === null || $sucursal === '') ? null : (int) $sucursal,
+                ], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', 'Sucursal del empleado cambiada', ['empleado_id' => $id, 'sucursal_id' => $sucursal]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en asignarSucursal', ['message' => $e->getMessage(), 'empleado_id' => $id]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     public function activarEmpleado(Request $request, $id)
     {
         [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
