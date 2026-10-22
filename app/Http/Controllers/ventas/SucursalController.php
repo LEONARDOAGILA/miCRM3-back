@@ -141,6 +141,8 @@ class SucursalController extends Controller
             'codigo'            => 'required|string|min:2|max:20',
             'nombre'            => 'required|string|min:3|max:150',
             'direccion'         => 'nullable|string|max:250',
+            // La escrita a mano, con referencias. Google no la toca.
+            'direccion_completa' => 'nullable|string|max:500',
             'telefono'          => 'nullable|string|max:50',
             'email'             => 'nullable|email|max:150',
             'tipo'              => 'nullable|string|in:POLIGONO,CIRCULO,poligono,circulo',
@@ -169,6 +171,8 @@ class SucursalController extends Controller
             'nombre.required' => 'El nombre de la sucursal es obligatorio',
             'nombre.min'      => 'El nombre debe tener al menos 3 caracteres',
             'email.email'     => 'El correo no tiene un formato válido',
+            'direccion.max'            => 'La dirección no puede superar los 250 caracteres',
+            'direccion_completa.max'   => 'La dirección completa no puede superar los 500 caracteres',
             'radio_metros.max'      => 'El radio no puede superar los 100 km',
             'tolerancia_metros.max' => 'La tolerancia no puede superar los 5 km',
         ];
@@ -183,6 +187,7 @@ class SucursalController extends Controller
             $d['codigo'],
             $d['nombre'],
             $num($d['direccion'] ?? null),
+            $num($d['direccion_completa'] ?? null),
             $num($d['telefono'] ?? null),
             $num($d['email'] ?? null),
             strtoupper($d['tipo'] ?? 'POLIGONO'),
@@ -202,9 +207,13 @@ class SucursalController extends Controller
         ];
     }
 
+    // codigo, nombre, direccion, direccion_completa, telefono, email, tipo,
+    // color, vertices, centro_lat, centro_lng, radio, tolerancia, activo,
+    // latitud, longitud  (el mismo orden que `parametros`)
     private const CASTS_DATOS = '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::VARCHAR,
-                                 ?::VARCHAR, ?::VARCHAR, ?::JSONB, ?::NUMERIC, ?::NUMERIC,
-                                 ?::NUMERIC, ?::NUMERIC, ?::BOOLEAN, ?::NUMERIC, ?::NUMERIC';
+                                 ?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::JSONB, ?::NUMERIC,
+                                 ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::BOOLEAN, ?::NUMERIC,
+                                 ?::NUMERIC';
 
     // ================================================================
     // LISTAR

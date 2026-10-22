@@ -34,8 +34,43 @@ class EmpleadoController extends Controller
 {
     use ApiResponder;
     use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
 
     private const CARPETA_FOTOS = 'img/empleados';
+
+    /**
+     * Las columnas por las que la cabecera puede filtrar, y de qué tipo.
+     *
+     * Tiene que decir lo mismo que la lista de allEmpleados y que la función
+     * rh.fn_empleados_listar_paginado: lo que no esté en las tres se tira.
+     * Se filtra por lo que SE VE —el cargo por su nombre, las fechas como
+     * texto—, no por los ids.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'                    => 'numero',
+        'salario'               => 'numero',
+        'numero_identificacion' => 'texto',
+        'tipo_identificacion'   => 'texto',
+        'nombres'               => 'texto',
+        'apellidos'             => 'texto',
+        'nombre_completo'       => 'texto',
+        'email'                 => 'texto',
+        'celular'               => 'texto',
+        'telefono'              => 'texto',
+        'cargo_nombre'          => 'texto',
+        'departamento_nombre'   => 'texto',
+        'sucursal_nombre'       => 'texto',
+        'jefe_nombre'           => 'texto',
+        'estado'                => 'texto',
+        'tipo_contrato'         => 'texto',
+        'created_by'            => 'texto',
+        'updated_by'            => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'fecha_ingreso'         => 'texto',
+        'fecha_salida'          => 'texto',
+        'created_at'            => 'texto',
+        'updated_at'            => 'texto',
+    ];
 
     /** SQLSTATE de las reglas de negocio de rh.fn_empleados_* → código HTTP. */
     private const ERRORES_NEGOCIO = [
@@ -45,6 +80,7 @@ class EmpleadoController extends Controller
         'P0013' => 404,
         'P0014' => 409,
         'P0015' => 422, 'P0016' => 422, 'P0017' => 422,
+        'P0019' => 422,   // sólo de la papelera: ya está dentro, o no estaba
     ];
 
     public function __construct() {
@@ -96,6 +132,9 @@ class EmpleadoController extends Controller
             'tipo_contrato'         => 'nullable|string|in:INDEFINIDO,TEMPORAL,PRACTICAS,CONSULTORIA',
             'salario'               => 'nullable|numeric|min:0|max:999999999',
             'activo'                => 'nullable|boolean',
+            // La sucursal donde trabaja; la función comprueba que exista,
+            // que no esté en la papelera y que esté activa.
+            'sucursal_id'           => 'nullable|integer',
         ];
     }
 
@@ -158,6 +197,9 @@ class EmpleadoController extends Controller
             $d['tipo_contrato'] ?? 'INDEFINIDO',
             isset($d['salario']) && $d['salario'] !== '' ? $d['salario'] : null,
             array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+            // Dónde trabaja. Vacío = sin sucursal, y entonces esa persona
+            // puede marcar asistencia desde cualquier lugar.
+            !empty($d['sucursal_id']) ? (int) $d['sucursal_id'] : null,
         ];
     }
 
@@ -182,6 +224,7 @@ class EmpleadoController extends Controller
                     ?::VARCHAR,   -- p_tipo_contrato
                     ?::NUMERIC,   -- p_salario
                     ?::BOOLEAN,   -- p_activo
+                    ?::BIGINT,    -- p_sucursal_id
                     ?::BIGINT,    -- p_usuario_id
                     ?::VARCHAR,   -- p_usuario_login
                     ?::VARCHAR,   -- p_usuario_nombre
@@ -214,7 +257,14 @@ class EmpleadoController extends Controller
             $perPage = (int) $request->input('per_page', 15);
             $search  = (string) $request->input('search', '');
 
-            $result = DB::selectOne('SELECT rh.fn_empleados_listar_paginado(?, ?, ?) as result', [$page, $perPage, $search]);
+            // Los filtros de la cabecera, traducidos y recortados a la lista
+            // blanca: una columna que no esté ahí se ignora en silencio.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_empleados_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB) as result',
+                [$page, $perPage, $search, json_encode((object) $filtros)]
+            );
             $resultado = json_decode($result->result, true);
             if (isset($resultado['success']) && $resultado['success'] === false) {
                 return $this->errorResponse($resultado['message'], 500);
@@ -765,6 +815,167 @@ class EmpleadoController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en getFotoUbicacion', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
             return $this->errorResponse('Ocurrió un error al obtener la foto', 500);
+        }
+    }
+
+    // ================================================================
+    // DÓNDE MÁS PUEDE MARCAR (rh.empleados_marcacion_sucursal)
+    // ================================================================
+    //
+    // La sucursal de la ficha dice dónde trabaja; éstas son las OTRAS en las
+    // que también se le acepta la marcación. Un cobrador, un jefe de zona o
+    // un gerente pasan por varios locales, y la regla del perímetro los
+    // dejaba fuera de todos menos uno.
+    //
+    // Se guardan como los contactos de emergencia: llega la lista completa y
+    // la función sincroniza —inserta, actualiza y borra lo que ya no viene—.
+
+    public function listSucursalesMarcacion($id)
+    {
+        try {
+            $result = DB::selectOne('SELECT rh.fn_empleados_sucursales_listar(?::BIGINT) as result', [(int) $id]);
+            $r = json_decode($result->result, true);
+            return $r['success']
+                ? $this->successResponse($r['data'], $r['message'])
+                : $this->errorResponse($r['message'], 500);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en listSucursalesMarcacion',
+                       ['message' => $e->getMessage(), 'empleado_id' => $id]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    public function guardarSucursalesMarcacion(Request $request, $id)
+    {
+        try {
+            $datos = $this->datosDe($request);
+            $validator = Validator::make($datos, [
+                'sucursales'               => 'present|array|max:50',
+                'sucursales.*.id'          => 'nullable|integer',
+                'sucursales.*.sucursal_id' => 'required|integer',
+                'sucursales.*.observacion' => 'nullable|string|max:250',
+                'sucursales.*.activo'      => 'nullable|boolean',
+            ], [
+                'sucursales.*.sucursal_id.required' => 'Cada línea necesita una sucursal',
+                'sucursales.max'                    => 'Máximo 50 sucursales por empleado',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+            $sucursales = $validator->validated()['sucursales'] ?? [];
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_empleados_sucursales_guardar(?::BIGINT, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, json_encode(array_values($sucursales))], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', 'Sucursales de marcación guardadas',
+                       ['empleado_id' => $id, 'cuantas' => count($sucursales)]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en guardarSucursalesMarcacion',
+                       ['message' => $e->getMessage(), 'empleado_id' => $id]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» un empleado es un borrado lógico (deleted_at / deleted_by):
+    // sale del listado y de los selectores, pero su ficha, su historial y sus
+    // marcaciones siguen ahí. Desde la papelera se restaura o se borra de
+    // verdad, y eso último pide el permiso «vaciar», que es otro distinto.
+
+    public function papelera(Request $request)
+    {
+        try {
+            $result = DB::selectOne('SELECT rh.fn_empleados_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+            return $this->successResponse($r['data'], $r['message']);
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de empleados', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    public function restaurar(Request $request)
+    {
+        return $this->accionPapelera($request, 'rh.fn_empleados_restaurar', 'restaurar');
+    }
+
+    public function eliminarDefinitivo(Request $request)
+    {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar», que es
+        // otro distinto de «papelera». Se comprueba AQUÍ y no sólo en el
+        // front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allEmpleados', 'vaciar',
+                'No tiene permiso para eliminar definitivamente empleados')) {
+            return $no;
+        }
+
+        return $this->accionPapelera($request, 'rh.fn_empleados_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    public function vaciarPapelera(Request $request)
+    {
+        if ($no = $this->exigirPermiso('allEmpleados', 'vaciar',
+                'No tiene permiso para vaciar la papelera de empleados')) {
+            return $no;
+        }
+
+        return $this->accionPapelera($request, 'rh.fn_empleados_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /** El tronco común de restaurar / eliminar definitivo / vaciar. */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        try {
+            $auditoria = $this->auditoria($request);
+
+            if ($conIds) {
+                $datos = $this->datosDe($request);
+                $ids = array_values(array_filter(array_map('intval', (array) ($datos['ids'] ?? []))));
+                if (empty($ids)) {
+                    return $this->errorResponse('No se indicó ningún empleado', 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, " . self::CASTS_AUDIT . ') as result',
+                    array_merge([json_encode($ids)], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne("SELECT {$funcion}(" . self::CASTS_AUDIT . ') as result', $auditoria);
+            }
+
+            $r = json_decode($result->result, true);
+
+            // Ya borrados de la base: fuera sus fotos del disco. La base
+            // devuelve los nombres porque ella no puede tocar el sistema de
+            // ficheros; es lo mismo que hace la papelera de marcas.
+            foreach ($r['data']['ficheros'] ?? [] as $fichero) {
+                $this->eliminarFotoPorNombre($fichero);
+            }
+
+            sistemaLog('info', "Papelera de empleados: {$nombre}", ['data' => $r['data'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado",
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre} de empleados", ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
         }
     }
 }
