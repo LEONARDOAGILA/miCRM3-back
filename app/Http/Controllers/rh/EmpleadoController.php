@@ -60,6 +60,7 @@ class EmpleadoController extends Controller
         'cargo_nombre'          => 'texto',
         'departamento_nombre'   => 'texto',
         'sucursal_nombre'       => 'texto',
+        'horario_nombre'        => 'texto',
         'jefe_nombre'           => 'texto',
         'estado'                => 'texto',
         'tipo_contrato'         => 'texto',
@@ -135,6 +136,8 @@ class EmpleadoController extends Controller
             // La sucursal donde trabaja; la función comprueba que exista,
             // que no esté en la papelera y que esté activa.
             'sucursal_id'           => 'nullable|integer',
+            // El horario con el que se le miden los atrasos; mismas reglas.
+            'horario_id'            => 'nullable|integer',
         ];
     }
 
@@ -200,6 +203,9 @@ class EmpleadoController extends Controller
             // Dónde trabaja. Vacío = sin sucursal, y entonces esa persona
             // puede marcar asistencia desde cualquier lugar.
             !empty($d['sucursal_id']) ? (int) $d['sucursal_id'] : null,
+            // A qué hora se le espera. Vacío = sin horario, y entonces
+            // marca sin que nadie le mida el atraso.
+            !empty($d['horario_id']) ? (int) $d['horario_id'] : null,
         ];
     }
 
@@ -225,6 +231,7 @@ class EmpleadoController extends Controller
                     ?::NUMERIC,   -- p_salario
                     ?::BOOLEAN,   -- p_activo
                     ?::BIGINT,    -- p_sucursal_id
+                    ?::BIGINT,    -- p_horario_id
                     ?::BIGINT,    -- p_usuario_id
                     ?::VARCHAR,   -- p_usuario_login
                     ?::VARCHAR,   -- p_usuario_nombre

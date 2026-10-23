@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\rh\CargoController;
 use App\Http\Controllers\rh\DepartamentoController;
 use App\Http\Controllers\rh\EmpleadoController;
+use App\Http\Controllers\rh\HorarioEmpleadoController;
 use App\Http\Controllers\rh\MarcacionController;
 use App\Http\Controllers\rh\RostroController;
 
@@ -23,7 +24,38 @@ Route::group([
     Route::post('addCargo', [CargoController::class, 'addCargo']);
     Route::post('editCargo/{id}', [CargoController::class, 'editCargo']);
     Route::post('activarCargo/{id}', [CargoController::class, 'activarCargo']);   // { activo? }; sin ella, alterna
-    Route::delete('deleteCargo/{id}', [CargoController::class, 'deleteCargo']);
+    Route::delete('deleteCargo/{id}', [CargoController::class, 'deleteCargo']);   // a la papelera
+
+    // Papelera de reciclaje (borrado lógico: deleteCargo manda a la papelera)
+    Route::get('papelera', [CargoController::class, 'papelera']);
+    Route::post('restaurarCargos', [CargoController::class, 'restaurarCargos']);       // { ids: [...] }
+    Route::post('eliminarDefinitivo', [CargoController::class, 'eliminarDefinitivo']); // { ids: [...] }
+    Route::delete('vaciarPapelera', [CargoController::class, 'vaciarPapelera']);
+});
+
+// HORARIOS DE TRABAJO DEL PERSONAL (hasta 4 jornadas por día)
+// No confundir con auth/horario, que es el horario de ACCESO AL CRM: aquél
+// cierra la sesión fuera de hora, éste dice a qué hora se espera al empleado
+// en su puesto y es contra el que se miden los atrasos de las marcaciones.
+Route::group([
+    'prefix' => 'horarioEmpleado', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allHorariosEmpleados',  [HorarioEmpleadoController::class, 'allHorariosEmpleados']);   // ?page&per_page&search&filtros
+    Route::get('listHorariosEmpleados', [HorarioEmpleadoController::class, 'listHorariosEmpleados']);  // los activos (selector)
+    Route::get('getHorarioEmpleado/{id}', [HorarioEmpleadoController::class, 'getHorarioEmpleado']);   // la ficha con sus jornadas
+    Route::post('addHorarioEmpleado',       [HorarioEmpleadoController::class, 'addHorarioEmpleado']);
+    Route::post('editHorarioEmpleado/{id}', [HorarioEmpleadoController::class, 'editHorarioEmpleado']);
+    Route::post('activarHorarioEmpleado/{id}', [HorarioEmpleadoController::class, 'activarHorarioEmpleado']); // { activo? }; sin ella, alterna
+    Route::delete('deleteHorarioEmpleado/{id}', [HorarioEmpleadoController::class, 'deleteHorarioEmpleado']); // a la papelera
+
+    // Probar el horario contra una hora cualquiera: qué jornada toca y cuánto atraso
+    Route::get('evaluar/{id}', [HorarioEmpleadoController::class, 'evaluar']);                         // ?fecha_hora=
+
+    // Papelera de reciclaje (deleteHorarioEmpleado manda a la papelera, con sus jornadas)
+    Route::get('papelera', [HorarioEmpleadoController::class, 'papelera']);
+    Route::post('restaurarHorariosEmpleados', [HorarioEmpleadoController::class, 'restaurarHorariosEmpleados']); // { ids: [...] }
+    Route::post('eliminarDefinitivo', [HorarioEmpleadoController::class, 'eliminarDefinitivo']);                 // { ids: [...] }
+    Route::delete('vaciarPapelera', [HorarioEmpleadoController::class, 'vaciarPapelera']);
 });
 
 // DEPARTAMENTOS

@@ -24,11 +24,47 @@ use App\Http\Resources\ApiResponder;
  *   GET    rh/cargo/findByIdCargo/{id}
  *   POST   rh/cargo/addCargo
  *   POST   rh/cargo/editCargo/{id}
- *   DELETE rh/cargo/deleteCargo/{id}
+ *   DELETE rh/cargo/deleteCargo/{id}               a la papelera (borrado lógico)
+ *   GET    rh/cargo/papelera                        lo que está en la papelera
+ *   POST   rh/cargo/restaurarCargos                 { ids: [...] }
+ *   POST   rh/cargo/eliminarDefinitivo              { ids: [...] }  (permiso «vaciar»)
+ *   DELETE rh/cargo/vaciarPapelera                  (permiso «vaciar»)
  */
 class CargoController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de cargos, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `activo` se queda fuera a propósito: en la rejilla es una casilla, y
+     * escribir texto para filtrarla no se entiende.
+     *
+     * Tiene que decir lo mismo que COLUMNAS_FILTRABLES de allCargos y que la
+     * lista de rh.fn_cargos_listar_paginado: una columna que sólo esté en la
+     * pantalla pinta un filtro que no filtra.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'id'            => 'numero',
+        'salario_base'  => 'numero',
+        'num_empleados' => 'numero',
+        'nombre'        => 'texto',
+        'nivel'         => 'texto',
+        'descripcion'   => 'texto',
+        'created_by'    => 'texto',
+        'updated_by'    => 'texto',
+        // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
+        'created_at'    => 'texto',
+        'updated_at'    => 'texto',
+    ];
 
     /**
      * SQLSTATE que las funciones de rh usan para las reglas de negocio.
@@ -40,6 +76,7 @@ class CargoController extends Controller
         'P0013' => 404,   // el cargo no existe
         'P0014' => 409,   // no se puede eliminar: tiene empleados / historial
         'P0015' => 422,   // salario inválido
+        'P0019' => 404,   // el cargo no está en la papelera (o ya estaba)
     ];
 
     public function __construct() {
@@ -122,7 +159,15 @@ class CargoController extends Controller
             $perPage = (int) $request->input('per_page', 15);
             $search  = (string) $request->input('search', '');
 
-            $result = DB::selectOne('SELECT rh.fn_cargos_listar_paginado(?, ?, ?) as result', [$page, $perPage, $search]);
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
+            // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
+            // las filas de la página y filtrar ahí buscaría dentro de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_cargos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB) as result',
+                [$page, $perPage, $search, json_encode((object) $filtros)]
+            );
             $resultado = json_decode($result->result, true);
 
             if (isset($resultado['success']) && $resultado['success'] === false) {
@@ -357,7 +402,7 @@ class CargoController extends Controller
             ]);
 
             $resultado = json_decode($result->result, true);
-            sistemaLog('info', 'Cargo eliminado', ['cargo_id' => $id, 'usuario' => $usuarioLogin ?? 'desconocido']);
+            sistemaLog('info', 'Cargo enviado a la papelera', ['cargo_id' => $id, 'usuario' => $usuarioLogin ?? 'desconocido']);
             return $this->successResponse($resultado['data'], $resultado['message']);
 
         } catch (QueryException $e) {
@@ -367,6 +412,122 @@ class CargoController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en deleteCargo', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cargo_id' => $id]);
             return $this->errorResponse('Ocurrió un error al eliminar el cargo', 500);
+        }
+    }
+
+    // ================================================================
+    // PAPELERA DE RECICLAJE
+    // ================================================================
+    //
+    // «Eliminar» un cargo es un borrado lógico: sale del listado y del combo
+    // de la ficha del empleado, pero no se borra. Desde la papelera se
+    // restaura o se borra de verdad.
+
+    /** Cargos que están en la papelera (más reciente primero). */
+    public function papelera()
+    {
+        try {
+            $result = DB::selectOne('SELECT rh.fn_cargos_papelera_listar() as result');
+            $r = json_decode($result->result, true);
+
+            if (isset($r['success']) && $r['success'] === false) {
+                return $this->errorResponse($r['message'], 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en papelera de cargos', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error al listar la papelera', 500);
+        }
+    }
+
+    /** Saca de la papelera uno o varios cargos. Body: { ids: [..] } */
+    public function restaurarCargos(Request $request)
+    {
+        return $this->accionPapelera($request, 'rh.fn_cargos_restaurar', 'restaurarCargos');
+    }
+
+    /** Borrado real de lo que está en la papelera. Body: { ids: [..] } */
+    public function eliminarDefinitivo(Request $request)
+    {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar», que es
+        // otro distinto de «papelera». Se comprueba AQUÍ y no sólo en el
+        // front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allCargos', 'vaciar',
+                'No tiene permiso para eliminar definitivamente cargos')) {
+            return $no;
+        }
+
+        return $this->accionPapelera($request, 'rh.fn_cargos_eliminar_definitivo', 'eliminarDefinitivo');
+    }
+
+    /** Borrado real de TODO lo que hay en la papelera. */
+    public function vaciarPapelera(Request $request)
+    {
+        // ESTO NO TIENE VUELTA ATRÁS: hace falta el permiso «vaciar», que es
+        // otro distinto de «papelera». Se comprueba AQUÍ y no sólo en el
+        // front: esconder el botón no es un permiso.
+        if ($no = $this->exigirPermiso('allCargos', 'vaciar',
+                'No tiene permiso para vaciar la papelera de cargos')) {
+            return $no;
+        }
+
+        return $this->accionPapelera($request, 'rh.fn_cargos_papelera_vaciar', 'vaciarPapelera', false);
+    }
+
+    /**
+     * El tronco común de restaurar / eliminar definitivo / vaciar: validar,
+     * llamar y traducir el error.
+     *
+     * Un cargo no tiene ficheros propios, así que aquí no hay nada que borrar
+     * del disco: todo se queda en la base.
+     */
+    private function accionPapelera(Request $request, string $funcion, string $nombre, bool $conIds = true)
+    {
+        [$usuarioId, $usuarioLogin, $usuarioNombre] = $this->contextoUsuario();
+        try {
+            $auditoria = [
+                $usuarioId ? (int) $usuarioId : null,
+                $usuarioLogin,
+                $usuarioNombre,
+                $request->ip(),
+                $request->userAgent(),
+                (string) Str::uuid(),
+            ];
+
+            if ($conIds) {
+                $validator = Validator::make($request->all(), [
+                    'ids'   => 'required|array|min:1|max:500',
+                    'ids.*' => 'integer',
+                ], [
+                    'ids.required' => 'No se indicó ningún cargo',
+                ]);
+                if ($validator->fails()) {
+                    return $this->errorResponse($validator->errors()->first(), 422);
+                }
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::JSONB, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result",
+                    array_merge([json_encode(array_map('intval', $validator->validated()['ids']))], $auditoria)
+                );
+            } else {
+                $result = DB::selectOne(
+                    "SELECT {$funcion}(?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID) as result",
+                    $auditoria
+                );
+            }
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', "Papelera de cargos: {$nombre}", ['data' => $r['data'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', "{$nombre} rechazado",
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage()]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', "Error en {$nombre}", ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse('Ocurrió un error en la papelera de cargos', 500);
         }
     }
 }
