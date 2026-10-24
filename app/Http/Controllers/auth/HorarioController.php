@@ -30,8 +30,13 @@ class HorarioController extends Controller
      * escribir texto para filtrarla no se entiende.
      */
     private const COLUMNAS_FILTRABLES = [
-        'id'     => 'numero',
-        'nombre' => 'texto',
+        'id'           => 'numero',
+        // Los contadores de la rejilla: dias con acceso, franjas y gente
+        'num_dias'     => 'numero',
+        'num_jornadas' => 'numero',
+        'num_usuarios' => 'numero',
+        'nombre'       => 'texto',
+        'descripcion'  => 'texto',
         // Las fechas, como texto sobre lo que se ve: «2026-10» busca el mes
         'created_at' => 'texto',
         'updated_at' => 'texto',
@@ -164,6 +169,33 @@ public function findByIdProfile($id)
 }    
 
 
+    /**
+     * ¿Con este horario se podría entrar en tal momento?
+     *
+     * Es la misma pregunta que responde el middleware en cada petición, pero
+     * para una fecha y hora cualquiera: sirve para probar un horario antes de
+     * ponérselo a cincuenta personas. De sólo lectura.
+     */
+    public function puedeEntrar(Request $request, $id)
+    {
+        try {
+            $cuando = (string) $request->input('fecha_hora', '');
+
+            $result = DB::selectOne(
+                'SELECT seguridad.fn_horarios_puede_entrar(?::BIGINT, ?::TIMESTAMPTZ) as result',
+                [(int) $id, $cuando !== '' ? $cuando : null]
+            );
+            return $this->successResponse(json_decode($result->result, true), 'La solicitud ha tenido éxito');
+
+        } catch (QueryException $e) {
+            // Una fecha que PostgreSQL no entiende es culpa de quien la manda
+            return $this->errorResponse('No se entiende la fecha y hora indicada', 422);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en puedeEntrar', ['message' => $e->getMessage(), 'horario_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al comprobar el horario', 500);
+        }
+    }
+
     public function getHorario($id)
     {
         try {
@@ -188,8 +220,17 @@ public function findByIdProfile($id)
             // 1. Validar los datos de entrada
             $validatedData = $this->validate($request, [
                 'nombre'  => 'required|string|max:100',
+                // Para que sirve este horario y a quien se le pone
+                'descripcion' => 'nullable|string|max:250',
                 'activo'  => 'nullable|boolean',
-                'dhorario' => 'nullable|array'
+                // Hasta cuatro jornadas por dia: siete dias por cuatro, 28
+                'dhorario'               => 'nullable|array|max:28',
+                'dhorario.*.dia'         => 'required|integer|min:1|max:7',
+                'dhorario.*.jornada'     => 'nullable|integer|min:1|max:4',
+                // `HH:MM` o `HH:MM:SS`, que es lo que da <input type="time">
+                'dhorario.*.hora_inicio' => ['required', 'string', 'regex:/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
+                'dhorario.*.hora_fin'    => ['required', 'string', 'regex:/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
+                'dhorario.*.activo'      => 'nullable|boolean'
             ]);
 
             // 2. Obtener datos del usuario autenticado
@@ -204,6 +245,9 @@ public function findByIdProfile($id)
                 $dhorarioArray = array_map(function($item) {
                     return [
                         'dia' => (int)$item['dia'],
+                        // Sin jornada se entiende que es la 1, que es lo que
+                        // habia cuando solo cabia una franja por dia
+                        'jornada' => (int)($item['jornada'] ?? 1),
                         'hora_inicio' => $item['hora_inicio'],
                         'hora_fin' => $item['hora_fin'],
                         'activo' => (bool)($item['activo'] ?? true)
@@ -212,13 +256,15 @@ public function findByIdProfile($id)
                 $dhorarioJson = json_encode($dhorarioArray);
             }
 
-            // 4. Convertir booleano para PostgreSQL
-            $activoPostgres = $validatedData['activo'] ? 'true' : 'false';
+            // 4. Convertir booleano para PostgreSQL. `activo` es opcional:
+            //    sin el, un horario nuevo nace encendido.
+            $activoPostgres = ($validatedData['activo'] ?? true) ? 'true' : 'false';
 
             // 5. Llamar a la función de PostgreSQL
             $result = DB::selectOne('
                 SELECT seguridad.fn_horarios_crear(
-                    ?::VARCHAR,
+                    ?::VARCHAR,   -- p_nombre
+                    ?::VARCHAR,   -- p_descripcion
                     ?::BOOLEAN,
                     ?::JSONB,
                     ?::BIGINT,
@@ -230,6 +276,7 @@ public function findByIdProfile($id)
                 ) as result
             ', [
                 $validatedData['nombre'],
+                $validatedData['descripcion'] ?? null,
                 $activoPostgres,
                 $dhorarioJson,
                 $usuarioId ? (int)$usuarioId : null,
@@ -253,6 +300,10 @@ public function findByIdProfile($id)
                 return $this->errorResponse($resultado['message'], 400, $resultado['error_code'] ?? null);
             }
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            // Un dato mal puesto es culpa de quien llama, no del servidor:
+            // sin esto caia en el catch de abajo y salia como un 500.
+            return $this->errorResponse($e->validator->errors()->first(), 422);
         } catch (Exception $e) {
             sistemaLog('error', 'Error en addHorario', [
                 'message' => $e->getMessage(),
@@ -341,8 +392,17 @@ public function findByIdProfile($id)
             
             $validator = Validator::make($data, [
                 'nombre'  => 'required|string|max:100',
+                // Para que sirve este horario y a quien se le pone
+                'descripcion' => 'nullable|string|max:250',
                 'activo'  => 'nullable|boolean',
-                'dhorario' => 'nullable|array'
+                // Hasta cuatro jornadas por dia: siete dias por cuatro, 28
+                'dhorario'               => 'nullable|array|max:28',
+                'dhorario.*.dia'         => 'required|integer|min:1|max:7',
+                'dhorario.*.jornada'     => 'nullable|integer|min:1|max:4',
+                // `HH:MM` o `HH:MM:SS`, que es lo que da <input type="time">
+                'dhorario.*.hora_inicio' => ['required', 'string', 'regex:/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
+                'dhorario.*.hora_fin'    => ['required', 'string', 'regex:/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
+                'dhorario.*.activo'      => 'nullable|boolean'
             ]);
             
             if ($validator->fails()) {
@@ -358,9 +418,10 @@ public function findByIdProfile($id)
             
             $dhorarioJson = $validatedData['dhorario'] ? json_encode($validatedData['dhorario']) : null;
             
-            $result = DB::selectOne('SELECT seguridad.fn_horarios_modificar(?, ?, ?, ?, ?, ?, ?, ?::inet, ?, ?::uuid) as result', [
+            $result = DB::selectOne('SELECT seguridad.fn_horarios_modificar(?, ?, ?, ?, ?, ?, ?, ?, ?::inet, ?, ?::uuid) as result', [
                 $id,
                 $validatedData['nombre'],
+                $validatedData['descripcion'] ?? null,
                 $validatedData['activo'] ?? true,
                 $dhorarioJson,
                 $usuarioId,

@@ -36,6 +36,47 @@ use App\Http\Resources\ApiResponder;
 class MarcacionController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\FiltrosDeColumna;
+
+    /**
+     * Por qué columnas deja filtrar la rejilla de MARCACIONES, y de qué tipo.
+     *
+     * Es una lista blanca, no una comprobación: lo que mande el navegador se
+     * compara contra esto y lo que no esté se tira. El nombre de la columna
+     * acaba dentro de una consulta, y de las dos formas de evitar que eso sea
+     * un agujero —escapar o no aceptar nombres libres— ésta es la que no
+     * depende de acordarse de escapar.
+     *
+     * `coordenadas` se queda fuera: en la rejilla es un enlace al mapa, y
+     * escribir texto para filtrarlo no se entiende.
+     */
+    private const COLUMNAS_FILTRABLES = [
+        'atraso_min'     => 'numero',
+        'similitud'      => 'numero',
+        'fecha'          => 'texto',
+        'hora'           => 'texto',
+        'hora_esperada'  => 'texto',
+        'empleado'       => 'texto',
+        'identificacion' => 'texto',
+        'tipo'           => 'texto',
+        'origen'         => 'texto',
+        'departamento'   => 'texto',
+        'dispositivo'    => 'texto',
+        'observacion'    => 'texto',
+        'created_by'     => 'texto',
+    ];
+
+    /** Y las de la rejilla de HORAS TRABAJADAS, que es otra cosa. */
+    private const COLUMNAS_FILTRABLES_RESUMEN = [
+        'marcaciones'     => 'numero',
+        'horas'           => 'numero',
+        'fecha'           => 'texto',
+        'empleado'        => 'texto',
+        'identificacion'  => 'texto',
+        'departamento'    => 'texto',
+        'primera_entrada' => 'texto',
+        'ultima_salida'   => 'texto',
+    ];
 
     /** Carpeta dentro del disco `public` donde van las fotos del kiosco. */
     private const CARPETA_FOTOS = 'img/marcaciones';
@@ -101,8 +142,13 @@ class MarcacionController extends Controller
     public function allMarcaciones(Request $request)
     {
         try {
+            // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
+            // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
+            // las filas de la página y filtrar ahí buscaría dentro de quince.
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
+
             $result = DB::selectOne(
-                'SELECT rh.fn_marcaciones_listar_paginado(?, ?, ?, ?::DATE, ?::DATE, ?::BIGINT, ?::VARCHAR, ?::VARCHAR) as result',
+                'SELECT rh.fn_marcaciones_listar_paginado(?, ?, ?, ?::DATE, ?::DATE, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::JSONB) as result',
                 [
                     (int) $request->input('page', 1),
                     (int) $request->input('per_page', 15),
@@ -112,6 +158,7 @@ class MarcacionController extends Controller
                     $request->filled('empleado_id') ? (int) $request->input('empleado_id') : null,
                     $request->input('tipo') ?: null,
                     $request->input('origen') ?: null,
+                    json_encode((object) $filtros),
                 ]
             );
             return $this->successResponse(json_decode($result->result, true), 'La solicitud ha tenido éxito');
@@ -136,15 +183,29 @@ class MarcacionController extends Controller
         }
     }
 
-    /** Horas trabajadas por empleado y día. */
+    /**
+     * Horas trabajadas por empleado y día, paginadas.
+     *
+     * Los TOTALES que vienen aparte son de todo lo que cumple el filtro, no de
+     * la página: si fueran de la página cambiarían al pasar de hoja.
+     */
     public function resumen(Request $request)
     {
         try {
-            $result = DB::selectOne('SELECT rh.fn_marcaciones_resumen(?::DATE, ?::DATE, ?::BIGINT) as result', [
-                $request->input('desde') ?: null,
-                $request->input('hasta') ?: null,
-                $request->filled('empleado_id') ? (int) $request->input('empleado_id') : null,
-            ]);
+            $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES_RESUMEN);
+
+            $result = DB::selectOne(
+                'SELECT rh.fn_marcaciones_resumen_paginado(?, ?, ?, ?::DATE, ?::DATE, ?::BIGINT, ?::JSONB) as result',
+                [
+                    (int) $request->input('page', 1),
+                    (int) $request->input('per_page', 15),
+                    $request->input('search', ''),
+                    $request->input('desde') ?: null,
+                    $request->input('hasta') ?: null,
+                    $request->filled('empleado_id') ? (int) $request->input('empleado_id') : null,
+                    json_encode((object) $filtros),
+                ]
+            );
             $resultado = json_decode($result->result, true);
             return $this->successResponse($resultado, 'La solicitud ha tenido éxito');
         } catch (Exception $e) {
