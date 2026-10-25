@@ -497,6 +497,8 @@ DECLARE
     v_tipo       varchar;
     v_naturaleza varchar;
     v_hijos      bigint;
+    v_usos       bigint;
+    v_donde      text;
     v_cascada    integer := 0;
     v_nuevo      jsonb;
 BEGIN
@@ -556,6 +558,19 @@ BEGIN
       FROM contabilidad.plan_cuentas WHERE padre_id = p_id AND deleted_at IS NULL;
     IF COALESCE(p_es_movimiento, true) AND v_hijos > 0 THEN
         RAISE EXCEPTION 'No se puede marcar «es de movimiento»: la cuenta tiene % subcuenta(s) y los asientos van en ellas.', v_hijos
+            USING ERRCODE = 'P0021';
+    END IF;
+
+    -- Y al revés: si está configurada en algún sitio —el ingreso de una
+    -- categoría, el inventario de otra— no puede dejar de recibir asientos,
+    -- porque esa configuración se quedaría apuntando a una cuenta de grupo.
+    SELECT COUNT(*), string_agg(DISTINCT co.nombre, ', ' ORDER BY co.nombre)
+      INTO v_usos, v_donde
+      FROM contabilidad.cuentas_config cc
+      JOIN contabilidad.conceptos_contables co ON co.codigo = cc.concepto
+     WHERE cc.cuenta_id = p_id;
+    IF NOT COALESCE(p_es_movimiento, true) AND (v_antes->>'es_movimiento')::boolean AND v_usos > 0 THEN
+        RAISE EXCEPTION 'No se puede quitar «recibe asientos»: la cuenta está puesta en la configuración contable (%). Cámbiela allí primero.', v_donde
             USING ERRCODE = 'P0021';
     END IF;
 
@@ -640,6 +655,8 @@ DECLARE
     v_existe boolean;
     v_antes  jsonb;
     v_hijos  bigint;
+    v_usos   bigint;
+    v_donde  text;
     v_fecha  timestamptz := CURRENT_TIMESTAMP;
     v_i      integer := 0;
     v_fila   record;
@@ -666,6 +683,19 @@ BEGIN
       FROM contabilidad.plan_cuentas WHERE padre_id = p_id AND deleted_at IS NULL;
     IF v_hijos > 0 THEN
         RAISE EXCEPTION 'No se puede eliminar: la cuenta tiene % subcuenta(s). Muévalas o bórrelas primero.', v_hijos
+            USING ERRCODE = 'P0014';
+    END IF;
+
+    -- Si está configurada en algún sitio, no se va: la categoría que la
+    -- tenía puesta se quedaría sin dónde asentar y nadie se enteraría hasta
+    -- que fallara una factura.
+    SELECT COUNT(*), string_agg(DISTINCT co.nombre, ', ' ORDER BY co.nombre)
+      INTO v_usos, v_donde
+      FROM contabilidad.cuentas_config cc
+      JOIN contabilidad.conceptos_contables co ON co.codigo = cc.concepto
+     WHERE cc.cuenta_id = p_id;
+    IF v_usos > 0 THEN
+        RAISE EXCEPTION 'No se puede eliminar: la cuenta está puesta en la configuración contable (%). Cámbiela allí primero.', v_donde
             USING ERRCODE = 'P0014';
     END IF;
 

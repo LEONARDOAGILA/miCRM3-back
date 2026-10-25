@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\contabilidad\PlanCuentaController;
+use App\Http\Controllers\contabilidad\CuentaConfigController;
 
 // ============================================================================
 // MÓDULO CONTABILIDAD. Prefijo global: /contabilidad (RouteServiceProvider).
@@ -28,4 +29,16 @@ Route::group([
     Route::post('restaurarPlanCuentas', [PlanCuentaController::class, 'restaurarPlanCuentas']); // { ids: [...] }
     Route::post('eliminarDefinitivo',   [PlanCuentaController::class, 'eliminarDefinitivo']);   // { ids: [...] }
     Route::delete('vaciarPapelera',     [PlanCuentaController::class, 'vaciarPapelera']);
+});
+
+// QUÉ CUENTA USA CADA COSA (de momento, las categorías de inventario)
+Route::group([
+    'prefix' => 'cuentaConfig', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('conceptos',  [CuentaConfigController::class, 'conceptos']);   // ?ambito=CATEGORIA
+    Route::get('categorias', [CuentaConfigController::class, 'categorias']);  // el árbol con sus cuentas: ?transaccion=1
+
+    // El id falta en el ámbito GLOBAL, que es el valor por omisión de todos
+    Route::get('obtener/{ambito}/{id?}',  [CuentaConfigController::class, 'obtener']);
+    Route::post('guardar/{ambito}/{id?}', [CuentaConfigController::class, 'guardar']); // { cuentas: {CONCEPTO: id|null} }
 });
