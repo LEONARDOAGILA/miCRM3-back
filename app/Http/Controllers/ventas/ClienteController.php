@@ -33,6 +33,7 @@ use App\Http\Resources\ApiResponder;
  *   GET    ventas/cliente/listContactos/{id}
  *   POST   ventas/cliente/guardarContactos/{id}    { contactos: [...] }
  *   POST   ventas/cliente/guardarUbicacion/{id}
+ *   POST   ventas/cliente/guardarSri/{id}         { sri: {...} } lo que dijo el SRI
  *   POST   ventas/cliente/addFotoUbicacion         { ClienteId, campo, imagen_file }
  *   GET    ventas/cliente/getFotoUbicacion/{id}/{campo}  (pública)
  *
@@ -153,6 +154,10 @@ class ClienteController extends Controller
             // El vendedor es un USUARIO del sistema: es quien atiende al
             // cliente y a quien le aparecen sus gestiones en la agenda
             'vendedor_id'           => 'nullable|integer|exists:pgsql.seguridad.users,id',
+            // El grupo comercial del que se copian las condiciones. Es
+            // OBLIGATORIO —la ficha lo trae puesto con el predeterminado—;
+            // que exista y no esté en la papelera lo comprueba la función.
+            'grupo_cliente_id'      => 'required|integer',
             'forma_pago'            => 'nullable|string|in:EFECTIVO,TRANSFERENCIA,TARJETA,CHEQUE,CREDITO',
             'limite_credito'        => 'nullable|numeric|min:0|max:9999999999',
             'dias_credito'          => 'nullable|integer|min:0|max:365',
@@ -175,6 +180,7 @@ class ClienteController extends Controller
             'email_alterno.email'            => 'El correo alterno no es válido',
             'genero.in'                      => 'El género debe ser M, F u O',
             'fecha_nacimiento.date_format'   => 'La fecha de nacimiento debe tener formato AAAA-MM-DD',
+            'grupo_cliente_id.required'      => 'El grupo comercial del cliente es obligatorio',
             'forma_pago.in'                  => 'La forma de pago no es válida',
             'limite_credito.numeric'         => 'El límite de crédito debe ser un número',
             'limite_credito.min'             => 'El límite de crédito no puede ser negativo',
@@ -216,6 +222,7 @@ class ClienteController extends Controller
             $vacioANull($d['genero'] ?? null),
             $vacioANull($d['direccion'] ?? null),
             !empty($d['vendedor_id']) ? (int) $d['vendedor_id'] : null,
+            !empty($d['grupo_cliente_id']) ? (int) $d['grupo_cliente_id'] : null,
             $d['forma_pago'] ?? 'EFECTIVO',
             isset($d['limite_credito']) && $d['limite_credito'] !== '' ? $d['limite_credito'] : 0,
             isset($d['dias_credito']) && $d['dias_credito'] !== '' ? (int) $d['dias_credito'] : 0,
@@ -243,6 +250,7 @@ class ClienteController extends Controller
                     ?::CHAR,      -- p_genero
                     ?::TEXT,      -- p_direccion
                     ?::BIGINT,    -- p_vendedor_id
+                    ?::BIGINT,    -- p_grupo_cliente_id
                     ?::VARCHAR,   -- p_forma_pago
                     ?::NUMERIC,   -- p_limite_credito
                     ?::INTEGER,   -- p_dias_credito
@@ -540,6 +548,51 @@ class ClienteController extends Controller
         } catch (Exception $e) {
             sistemaLog('error', 'Error en guardarContactos (cliente)', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cliente_id' => $id]);
             return $this->errorResponse('Ocurrió un error al guardar los contactos', 500);
+        }
+    }
+
+    // ================================================================
+    // LO QUE DIJO EL SRI
+    // ================================================================
+
+    /**
+     * Guarda la foto del RUC que trajo la consulta al SRI.
+     *
+     * VA APARTE DE editCliente a propósito, como los contactos y la
+     * ubicación: no son datos que el usuario escriba —vienen tal cual del
+     * SRI— y meterlos en la ficha habría dejado fn_clientes_modificar con
+     * cuarenta parámetros posicionales.
+     *
+     * Lo que llega es el mismo objeto que devuelve
+     * config/registroCivil/consultarRuc, sin tocar.
+     */
+    public function guardarSri(Request $request, $id)
+    {
+        try {
+            $datos = $this->datosDe($request);
+            $sri = $datos['sri'] ?? null;
+
+            if (!is_array($sri) || empty($sri['ruc'])) {
+                return $this->errorResponse('No se indicó qué guardar del SRI', 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ventas.fn_clientes_sri_guardar(?::BIGINT, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, json_encode($sri)], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', 'Datos del SRI guardados', ['cliente_id' => $id, 'ruc' => $sri['ruc']]);
+            return $this->successResponse($r['data'] ?? null, $r['message'] ?? 'Datos del SRI guardados');
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            sistemaLog($codigo >= 500 ? 'error' : 'warning', 'guardarSri rechazado',
+                       ['sqlstate' => $e->errorInfo[0] ?? null, 'message' => $e->getMessage(), 'cliente_id' => $id]);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en guardarSri', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'cliente_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al guardar los datos del SRI', 500);
         }
     }
 

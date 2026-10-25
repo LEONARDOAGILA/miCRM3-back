@@ -37,6 +37,7 @@ Route::group([
 ], function () {
     Route::get('conceptos',  [CuentaConfigController::class, 'conceptos']);   // ?ambito=CATEGORIA
     Route::get('categorias', [CuentaConfigController::class, 'categorias']);  // el árbol con sus cuentas: ?transaccion=1
+    Route::get('grupos',     [CuentaConfigController::class, 'grupos']);     // el árbol de grupos de clientes: ?activos=1
 
     // El id falta en el ámbito GLOBAL, que es el valor por omisión de todos
     Route::get('obtener/{ambito}/{id?}',  [CuentaConfigController::class, 'obtener']);

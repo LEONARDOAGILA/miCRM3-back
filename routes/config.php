@@ -7,10 +7,24 @@ use App\Http\Controllers\config\PermisoArchivoController;
 use App\Http\Controllers\config\DepartamentoController;
 use App\Http\Controllers\config\BoletinController;
 use App\Http\Controllers\config\NotificacionController;
+use App\Http\Controllers\config\RegistroCivilController;
 
 
 
 
+
+// REGISTRO CIVIL (consulta de cédulas)
+// Devuelve los nombres de una cédula para no teclearlos a mano. La fuente es
+// una página de terceros, así que esto es una AYUDA: si se cae, contesta 503
+// y la ficha sigue dejando escribir a mano. Va en `config` —y no en ventas—
+// porque lo van a usar también la ficha del empleado y la del proveedor.
+Route::group([
+    'prefix' => 'registroCivil', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('consultarCedula/{identificacion}', [RegistroCivilController::class, 'consultarCedula']);
+    // Las empresas no están en el Registro Civil: su razón social la da el SRI
+    Route::get('consultarRuc/{ruc}', [RegistroCivilController::class, 'consultarRuc']);
+});
 
 // ARCHIVOS
 Route::group([

@@ -151,6 +151,33 @@ class CuentaConfigController extends Controller
         }
     }
 
+    /**
+     * El árbol de GRUPOS DE CLIENTES con la cuenta que usa cada uno.
+     *
+     * El hermano de `categorias`: mismo trato —sin paginar, con el `nivel` de
+     * cada fila— pero sobre ventas.grupos_clientes y con los conceptos del
+     * cliente (cuenta por cobrar, anticipos, mora, incobrables).
+     */
+    public function grupos(Request $request)
+    {
+        try {
+            $soloActivos = $request->input('activos', '0') === '1';
+
+            $result = DB::selectOne(
+                'SELECT contabilidad.fn_cuentas_config_grupos(?::BOOLEAN) as result', [$soloActivos]);
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                return $this->errorResponse($r['message'] ?? 'No se pudo listar las cuentas por grupo de clientes', 500);
+            }
+            return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en cuentas por grupo de clientes', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     /** Los conceptos de una cosa: lo que tiene puesto y lo que usaría. */
     public function obtener(Request $request, $ambito, $id = null)
     {

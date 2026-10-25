@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ventas\ClienteController;
+use App\Http\Controllers\ventas\GrupoClienteController;
 use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
 use App\Http\Controllers\ventas\CatalogoGestionController;
@@ -50,6 +51,31 @@ Route::group([
     Route::delete('vaciarPapelera',   [SucursalController::class, 'vaciarPapelera']);
 });
 
+// GRUPOS DE CLIENTES (árbol)
+// Agrupan las condiciones comerciales —forma de pago, cupo, días de crédito y
+// descuento— que casi siempre son las mismas para todo un grupo. Es el mismo
+// árbol de inventarios/categoria: no pagina y tiene su ruta `mover`, que es lo
+// que usa el arrastre de la rejilla.
+Route::group([
+    'prefix' => 'grupoCliente', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allGruposClientes',  [GrupoClienteController::class, 'allGruposClientes']);   // el árbol entero: ?activos=1 para sólo activos
+    Route::get('listGruposClientes', [GrupoClienteController::class, 'listGruposClientes']);  // lo mismo, para el selector de la ficha del cliente
+    Route::get('findByIdGrupoCliente/{id}', [GrupoClienteController::class, 'findByIdGrupoCliente']);
+    Route::post('addGrupoCliente',          [GrupoClienteController::class, 'addGrupoCliente']);
+    Route::post('editGrupoCliente/{id}',    [GrupoClienteController::class, 'editGrupoCliente']);
+    Route::post('activarGrupoCliente/{id}', [GrupoClienteController::class, 'activarGrupoCliente']); // { activo? }; sin ella, alterna
+    Route::post('moverGrupoCliente/{id}',   [GrupoClienteController::class, 'moverGrupoCliente']);   // { padre_id, antes_de }
+    Route::post('predeterminarGrupoCliente/{id}', [GrupoClienteController::class, 'predeterminarGrupoCliente']); // { predeterminado? }; sin ella, alterna
+    Route::delete('deleteGrupoCliente/{id}',[GrupoClienteController::class, 'deleteGrupoCliente']);  // a la papelera
+
+    // Papelera de reciclaje (borrado lógico: deleteGrupoCliente manda a la papelera)
+    Route::get('papelera', [GrupoClienteController::class, 'papelera']);
+    Route::post('restaurarGruposClientes', [GrupoClienteController::class, 'restaurarGruposClientes']); // { ids: [...] }
+    Route::post('eliminarDefinitivo', [GrupoClienteController::class, 'eliminarDefinitivo']);          // { ids: [...] }
+    Route::delete('vaciarPapelera', [GrupoClienteController::class, 'vaciarPapelera']);
+});
+
 // CLIENTES
 Route::group([
     'prefix' => 'cliente',
@@ -65,6 +91,7 @@ Route::group([
     Route::get('listContactos/{id}', [ClienteController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // personas de contacto
     Route::post('guardarContactos/{id}', [ClienteController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza
     Route::post('guardarUbicacion/{id}', [ClienteController::class, 'guardarUbicacion'])->middleware(['jwt.auth', 'usuario.activo']); // los datos que trae el mapa
+    Route::post('guardarSri/{id}', [ClienteController::class, 'guardarSri'])->middleware(['jwt.auth', 'usuario.activo']);            // { sri: {...} } lo que devolvió el SRI
     Route::post('addFotoUbicacion', [ClienteController::class, 'addFotoUbicacion'])->middleware(['jwt.auth', 'usuario.activo']);      // { ClienteId, campo: mapa|casa, imagen_file }
 
     // Papelera de reciclaje (borrado lógico: deleteCliente manda a la papelera)
