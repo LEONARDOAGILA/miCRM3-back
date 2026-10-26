@@ -49,7 +49,7 @@ class CuentaConfigController extends Controller
     private const NO_APLICA = ['NO_APLICA', 'NO APLICA', 'N/A'];
 
     /** Los ámbitos que admite la tabla. La lista está también en el CHECK. */
-    private const AMBITOS = ['CATEGORIA', 'PRODUCTO', 'GRUPO_CLIENTE', 'CLIENTE', 'SUCURSAL', 'IMPUESTO', 'FORMA_PAGO', 'GLOBAL'];
+    private const AMBITOS = ['CATEGORIA', 'PRODUCTO', 'GRUPO_CLIENTE', 'CLIENTE', 'SUCURSAL', 'PUNTO_VENTA', 'IMPUESTO', 'FORMA_PAGO', 'GLOBAL'];
 
     public function __construct()
     {

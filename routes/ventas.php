@@ -12,6 +12,8 @@ use App\Http\Controllers\ventas\NotaClienteController;
 use App\Http\Controllers\ventas\ZonaController;
 use App\Http\Controllers\ventas\SucursalController;
 use App\Http\Controllers\ventas\RecorridoController;
+use App\Http\Controllers\ventas\ProformaController;
+use App\Http\Controllers\ventas\PuntoVentaController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -229,4 +231,67 @@ Route::group([
     Route::get('cobradores', [RecorridoController::class, 'cobradores']);       // ?desde&hasta
     Route::get('dias/{usuarioId}', [RecorridoController::class, 'dias']);       // ?desde&hasta
     Route::get('delDia/{usuarioId}', [RecorridoController::class, 'delDia']);   // ?fecha&radio_parada&minutos_parada&radio_cliente
+});
+
+// PROFORMAS
+// El primer documento del módulo: cabecera, líneas y ciclo de vida. Se guarda
+// entero de una vez —no hay rutas por línea— y el estado se cambia por su
+// propia ruta, que es la que conoce las transiciones permitidas.
+//
+// `condicionesCliente`, `clientePorIdentificacion`, `buscarProducto` y
+// `productos` son las ayudas que usa la pantalla mientras se arma el
+// documento: las dos primeras rellenan media cabecera al escoger el cliente
+// (por id o tecleando su cédula), y las otras dos contestan cuando se teclea
+// un código en la rejilla o se abre el listado. El prefijo cuelga de /ventas,
+// que ya está en config/cors.php, así que no hay que añadir nada allí.
+Route::group([
+    'prefix' => 'proforma', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allProformas', [ProformaController::class, 'allProformas']);                  // ?page&per_page&search&estado&filtros
+    Route::get('resumenProformas', [ProformaController::class, 'resumenProformas']);
+    Route::get('findByIdProforma/{id}', [ProformaController::class, 'findByIdProforma']);
+    Route::get('condicionesCliente/{clienteId}', [ProformaController::class, 'condicionesCliente']);
+    Route::get('clientePorIdentificacion/{identificacion}', [ProformaController::class, 'clientePorIdentificacion']);
+    Route::get('buscarProducto', [ProformaController::class, 'buscarProducto']);              // ?texto&limite
+    Route::get('productos', [ProformaController::class, 'productos']);                        // ?page&per_page&search&categoria_id&marca_id
+    Route::post('addProforma', [ProformaController::class, 'addProforma']);                   // { cliente_id, ..., detalle:[..] }
+    Route::post('editProforma/{id}', [ProformaController::class, 'editProforma']);
+    Route::post('estadoProforma/{id}', [ProformaController::class, 'estadoProforma']);        // { estado, motivo? }
+    Route::post('renovarProforma/{id}', [ProformaController::class, 'renovarProforma']);      // { validez_dias? }
+    Route::post('duplicarProforma/{id}', [ProformaController::class, 'duplicarProforma']);
+    Route::delete('deleteProforma/{id}', [ProformaController::class, 'deleteProforma']);
+
+    // Papelera de reciclaje
+    Route::get('papelera', [ProformaController::class, 'papelera']);
+    Route::post('restaurarProformas', [ProformaController::class, 'restaurarProformas']);     // { ids:[..] }
+    Route::post('eliminarDefinitivo', [ProformaController::class, 'eliminarDefinitivo']);     // { ids:[..] }  (permiso «vaciar»)
+    Route::post('vaciarPapelera', [ProformaController::class, 'vaciarPapelera']);             // (permiso «vaciar»)
+});
+
+// PUNTOS DE VENTA (las cajas de cada sucursal)
+// Una sucursal tiene varias cajas, y lo que de verdad las distingue es que
+// cada una cuadra su propio dinero: por eso lo importante de la ficha son
+// SUS CUENTAS CONTABLES, que no se guardan por aquí sino por el mecanismo
+// común (contabilidad/cuentaConfig con ámbito PUNTO_VENTA), el mismo que usan
+// las categorías y los grupos de clientes.
+//
+// Las crean los contadores: el menú se cuelga con los accesos del plan de
+// cuentas, no con los de la pantalla de clientes.
+Route::group([
+    'prefix' => 'puntoVenta', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allPuntosVenta', [PuntoVentaController::class, 'allPuntosVenta']);       // ?activos=0&sucursal_id=
+    Route::get('listPuntosVenta', [PuntoVentaController::class, 'listPuntosVenta']);     // ?activos=1 (combos)
+    Route::get('findByIdPuntoVenta/{id}', [PuntoVentaController::class, 'findByIdPuntoVenta']);
+    Route::get('sugerencia', [PuntoVentaController::class, 'sugerencia']);               // ?sucursal_id=
+    Route::post('addPuntoVenta', [PuntoVentaController::class, 'addPuntoVenta']);
+    Route::post('editPuntoVenta/{id}', [PuntoVentaController::class, 'editPuntoVenta']);
+    Route::post('activarPuntoVenta/{id}', [PuntoVentaController::class, 'activarPuntoVenta']); // { activo? }
+    Route::delete('deletePuntoVenta/{id}', [PuntoVentaController::class, 'deletePuntoVenta']);
+
+    // Papelera de reciclaje
+    Route::get('papelera', [PuntoVentaController::class, 'papelera']);
+    Route::post('restaurarPuntosVenta', [PuntoVentaController::class, 'restaurarPuntosVenta']); // { ids:[..] }
+    Route::post('eliminarDefinitivo', [PuntoVentaController::class, 'eliminarDefinitivo']);     // { ids:[..] } (permiso «vaciar»)
+    Route::post('vaciarPapelera', [PuntoVentaController::class, 'vaciarPapelera']);             // (permiso «vaciar»)
 });
