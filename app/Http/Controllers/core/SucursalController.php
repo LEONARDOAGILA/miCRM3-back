@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\ventas;
+namespace App\Http\Controllers\core;
 
 use Exception;
 use Illuminate\Database\QueryException;
@@ -12,7 +12,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
 
 /**
- * CRUD de SUCURSALES (ventas.sucursales).
+ * CRUD de SUCURSALES (core.sucursales).
  *
  * Una sucursal es el sitio donde trabaja la gente, y lleva dibujado su
  * PERÍMETRO en el mapa (un polígono, o un círculo con centro y radio). A cada
@@ -20,7 +20,7 @@ use App\Http\Resources\ApiResponder;
  * acepta la marcación si está dentro de ese perímetro.
  *
  * Mismo esquema que MarcaController: la lógica vive en las funciones
- * ventas.fn_sucursales_* (validaciones, auditoría, transacción) y aquí sólo
+ * core.fn_sucursales_* (validaciones, auditoría, transacción) y aquí sólo
  * se valida la entrada, se llama con el contexto del usuario y se traduce la
  * respuesta.
  *
@@ -228,7 +228,7 @@ class SucursalController extends Controller
             $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB) as result',
+                'SELECT core.fn_sucursales_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::JSONB) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
                  (string) $request->input('search', ''),
@@ -252,7 +252,7 @@ class SucursalController extends Controller
     {
         try {
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_listar(?::BOOLEAN) as result',
+                'SELECT core.fn_sucursales_listar(?::BOOLEAN) as result',
                 [$request->input('activas', '1') === '1']
             );
             $r = json_decode($result->result, true);
@@ -271,7 +271,7 @@ class SucursalController extends Controller
     public function findByIdSucursal($id)
     {
         try {
-            $result = DB::selectOne('SELECT ventas.fn_sucursales_obtener(?::BIGINT) as result', [(int) $id]);
+            $result = DB::selectOne('SELECT core.fn_sucursales_obtener(?::BIGINT) as result', [(int) $id]);
             $r = json_decode($result->result, true);
             return $this->successResponse($r['data'], $r['message']);
 
@@ -295,7 +295,7 @@ class SucursalController extends Controller
         try {
             $d = $this->datosDe($request);
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_contiene(?::BIGINT, ?::NUMERIC, ?::NUMERIC) as result',
+                'SELECT core.fn_sucursales_contiene(?::BIGINT, ?::NUMERIC, ?::NUMERIC) as result',
                 [(int) $id,
                  isset($d['latitud'])  && $d['latitud']  !== '' ? (float) $d['latitud']  : null,
                  isset($d['longitud']) && $d['longitud'] !== '' ? (float) $d['longitud'] : null]
@@ -322,7 +322,7 @@ class SucursalController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_crear(' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
+                'SELECT core.fn_sucursales_crear(' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
                 array_merge($this->parametros($d), $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -349,7 +349,7 @@ class SucursalController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_modificar(?::BIGINT, ' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
+                'SELECT core.fn_sucursales_modificar(?::BIGINT, ' . self::CASTS_DATOS . ', ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id], $this->parametros($d), $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -374,7 +374,7 @@ class SucursalController extends Controller
             $activo = array_key_exists('activo', $datos) ? (bool) $datos['activo'] : null;
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_activar(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT core.fn_sucursales_activar(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, $activo], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -395,7 +395,7 @@ class SucursalController extends Controller
     {
         try {
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT core.fn_sucursales_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -419,7 +419,7 @@ class SucursalController extends Controller
     public function papelera(Request $request)
     {
         try {
-            $result = DB::selectOne('SELECT ventas.fn_sucursales_papelera_listar() as result');
+            $result = DB::selectOne('SELECT core.fn_sucursales_papelera_listar() as result');
             $r = json_decode($result->result, true);
             return $this->successResponse($r['data'], 'La solicitud ha tenido éxito');
 
@@ -431,7 +431,7 @@ class SucursalController extends Controller
 
     public function restaurar(Request $request)
     {
-        return $this->accionPapelera($request, 'ventas.fn_sucursales_restaurar', 'restaurar');
+        return $this->accionPapelera($request, 'core.fn_sucursales_restaurar', 'restaurar');
     }
 
     public function eliminarDefinitivo(Request $request)
@@ -444,7 +444,7 @@ class SucursalController extends Controller
             return $no;
         }
 
-        return $this->accionPapelera($request, 'ventas.fn_sucursales_eliminar_definitivo', 'eliminarDefinitivo');
+        return $this->accionPapelera($request, 'core.fn_sucursales_eliminar_definitivo', 'eliminarDefinitivo');
     }
 
     public function vaciarPapelera(Request $request)
@@ -454,7 +454,7 @@ class SucursalController extends Controller
             return $no;
         }
 
-        return $this->accionPapelera($request, 'ventas.fn_sucursales_papelera_vaciar', 'vaciarPapelera', false);
+        return $this->accionPapelera($request, 'core.fn_sucursales_papelera_vaciar', 'vaciarPapelera', false);
     }
 
     /** El tronco común de restaurar / eliminar definitivo / vaciar. */
@@ -561,7 +561,7 @@ class SucursalController extends Controller
             $id    = (int) $request->SucursalId;
             $campo = $request->campo;
 
-            $existe = DB::selectOne('SELECT id, foto, mapa_foto FROM ventas.sucursales WHERE id = ?', [$id]);
+            $existe = DB::selectOne('SELECT id, foto, mapa_foto FROM core.sucursales WHERE id = ?', [$id]);
             if (!$existe) {
                 DB::rollBack();
                 return $this->errorResponse('Sucursal no encontrada', 404);
@@ -583,7 +583,7 @@ class SucursalController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_foto(?::BIGINT, ?::TEXT, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT core.fn_sucursales_foto(?::BIGINT, ?::TEXT, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([$id, $campo, $filename], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -626,7 +626,7 @@ class SucursalController extends Controller
             }
 
             $columna = $campo === 'foto' ? 'foto' : 'mapa_foto';
-            $r = DB::selectOne("SELECT $columna AS archivo FROM ventas.sucursales WHERE id = ?", [(int) $id]);
+            $r = DB::selectOne("SELECT $columna AS archivo FROM core.sucursales WHERE id = ?", [(int) $id]);
             if (!$r || !$r->archivo) {
                 return $this->errorResponse('La sucursal no tiene esa imagen', 404);
             }
@@ -653,13 +653,13 @@ class SucursalController extends Controller
             }
 
             $columna = $campo === 'foto' ? 'foto' : 'mapa_foto';
-            $antes = DB::selectOne("SELECT $columna AS archivo FROM ventas.sucursales WHERE id = ?", [(int) $id]);
+            $antes = DB::selectOne("SELECT $columna AS archivo FROM core.sucursales WHERE id = ?", [(int) $id]);
             if (!$antes) {
                 return $this->errorResponse('Sucursal no encontrada', 404);
             }
 
             $result = DB::selectOne(
-                'SELECT ventas.fn_sucursales_foto(?::BIGINT, ?::TEXT, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT core.fn_sucursales_foto(?::BIGINT, ?::TEXT, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, $campo, null], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);

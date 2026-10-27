@@ -65,6 +65,12 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 
+        // La estructura de la empresa: sucursales y puntos de venta
+        'core' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':core',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
         'inventarios' => [
             \Illuminate\Routing\Middleware\ThrottleRequests::class.':inventarios',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,

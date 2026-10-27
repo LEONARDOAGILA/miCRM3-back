@@ -1,13 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\config\ArchivoController;
-use App\Http\Controllers\config\PermisoArchivoController;
+use App\Http\Controllers\core\ArchivoController;
+use App\Http\Controllers\core\PermisoArchivoController;
 
-use App\Http\Controllers\config\DepartamentoController;
-use App\Http\Controllers\config\BoletinController;
-use App\Http\Controllers\config\NotificacionController;
-use App\Http\Controllers\config\RegistroCivilController;
+use App\Http\Controllers\core\BoletinController;
+use App\Http\Controllers\core\NotificacionController;
+use App\Http\Controllers\core\RegistroCivilController;
 
 
 
@@ -67,21 +66,6 @@ Route::group([
     Route::delete('vaciarPapelera', [ArchivoController::class, 'vaciarPapelera']);
 });
 
-
-// DEPARTAMENTOS
-Route::group([
-    //'prefix' => 'departamento',
-    'prefix' => 'departamento', 'middleware' => ['jwt.auth', 'usuario.activo']
-], function () {
-    Route::get('allDepartamentos', [DepartamentoController::class, 'allDepartamentos']);
-    Route::get('listDepartamentos', [DepartamentoController::class, 'listDepartamentos']);
-    Route::get('findByIdDepartamento/{id}', [DepartamentoController::class, 'findByIdDepartamento']);
-
-    Route::post('addDepartamento', [DepartamentoController::class, 'addDepartamento']);
-    Route::post('clonDepartamento', [DepartamentoController::class, 'clonDepartamento']);
-    Route::post('editDepartamento/{id}', [DepartamentoController::class, 'editDepartamento']);
-    Route::delete('deleteDepartamento/{id}', [DepartamentoController::class, 'deleteDepartamento']);
-});
 
 
 

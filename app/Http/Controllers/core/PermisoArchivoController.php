@@ -1,5 +1,5 @@
 <?php
-namespace App\Http\Controllers\config;
+namespace App\Http\Controllers\core;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\config;
+namespace App\Http\Controllers\core;
 
 use Exception;
 use Illuminate\Database\QueryException;
