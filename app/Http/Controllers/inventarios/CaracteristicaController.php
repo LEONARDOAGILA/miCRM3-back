@@ -30,6 +30,7 @@ use App\Http\Resources\ApiResponder;
  *   POST   inventarios/caracteristica/addCaracteristica
  *   POST   inventarios/caracteristica/editCaracteristica/{id}
  *   POST   inventarios/caracteristica/activarCaracteristica/{id}   { activo? }; sin ella, alterna
+ *   POST   inventarios/caracteristica/requeridoCaracteristica/{id} { requerido? }; sin ella, alterna
  *   POST   inventarios/caracteristica/ordenarCaracteristicas      { ids: [...] } en el orden nuevo
  *   DELETE inventarios/caracteristica/deleteCaracteristica/{id}    a la papelera
  *   GET    inventarios/caracteristica/papelera
@@ -57,6 +58,8 @@ class CaracteristicaController extends Controller
         'categoria_ruta' => 'texto',
         'orden'          => 'numero',
         'estado'         => 'texto',
+        // Lo que se ve en la celda: «Requerida» / «Opcional»
+        'requerida'      => 'texto',
         'num_productos'  => 'numero',
         'created_by'     => 'texto',
         'updated_by'     => 'texto',
@@ -130,10 +133,21 @@ class CaracteristicaController extends Controller
     private function reglas(): array
     {
         return [
-            'categoria_id' => 'required|integer',
-            'nombre'       => 'required|string|min:2|max:100',
-            'orden'        => 'nullable|integer|min:1|max:9999',
-            'activo'       => 'nullable|boolean',
+            'categoria_id'    => 'required|integer',
+            // El nombre ya NO se escribe: se escoge del diccionario
+            // (inventarios.caracteristicas_nombres), que es lo que impide que
+            // «peso» entre cuatro veces y una de ellas como «pezo».
+            'nombre_id'       => 'required|integer|min:1',
+            // Las opciones permitidas, sólo para los nombres de tipo LISTA, y
+            // son de ESTA categoría: «Tipo» es (gas / eléctrica) en cocinas y
+            // (split / portátil / ventana) en aires.
+            'valores_lista'   => 'nullable|array|max:50',
+            'valores_lista.*' => 'string|max:100',
+            'orden'           => 'nullable|integer|min:1|max:9999',
+            'activo'          => 'nullable|boolean',
+            // Requerida: el producto de esa categoría no se podrá guardar sin
+            // ella. Lo exige la función, no esta clase.
+            'requerido'       => 'nullable|boolean',
         ];
     }
 
@@ -141,11 +155,32 @@ class CaracteristicaController extends Controller
     {
         return [
             'categoria_id.required' => 'Hay que decir a qué categoría pertenece',
-            'nombre.required'       => 'El nombre de la característica es obligatorio',
-            'nombre.min'            => 'El nombre debe tener al menos 2 caracteres',
-            'nombre.max'            => 'El nombre no puede superar los 100 caracteres',
+            'nombre_id.required'    => 'Elija el nombre de la característica',
+            'nombre_id.min'         => 'Elija el nombre de la característica',
+            'valores_lista.max'     => 'No se pueden definir más de 50 opciones',
+            'valores_lista.*.max'   => 'Cada opción puede tener hasta 100 caracteres',
             'orden.min'             => 'El orden empieza en 1',
         ];
+    }
+
+    /**
+     * El array de opciones, como literal de array de Postgres.
+     *
+     * Se manda `?::TEXT[]`, así que hay que armar el `{"a","b"}` a mano y
+     * escapar la comilla y la contrabarra: una opción con una comilla dentro
+     * rompería el literal.
+     */
+    private function literalArray(?array $valores): ?string
+    {
+        $limpios = [];
+        foreach ((array) $valores as $v) {
+            $v = trim((string) $v);
+            if ($v === '') {
+                continue;
+            }
+            $limpios[] = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $v) . '"';
+        }
+        return empty($limpios) ? null : '{' . implode(',', $limpios) . '}';
     }
 
     // ================================================================
@@ -239,18 +274,20 @@ class CaracteristicaController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_caracteristicas_crear(?::BIGINT, ?::VARCHAR, ?::INTEGER, ?::BOOLEAN, '
+                'SELECT inventarios.fn_caracteristicas_crear(?::BIGINT, ?::BIGINT, ?::TEXT[], ?::INTEGER, ?::BOOLEAN, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $d['categoria_id'],
-                    $d['nombre'],
+                    (int) $d['nombre_id'],
+                    $this->literalArray($d['valores_lista'] ?? null),
                     isset($d['orden']) && $d['orden'] !== '' ? (int) $d['orden'] : null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    array_key_exists('requerido', $d) ? (bool) $d['requerido'] : false,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
 
-            sistemaLog('info', 'Característica creada', ['nombre' => $d['nombre'], 'categoria_id' => $d['categoria_id']]);
+            sistemaLog('info', 'Característica creada', ['nombre_id' => $d['nombre_id'], 'categoria_id' => $d['categoria_id']]);
             return $this->successResponse($r['data'], $r['message']);
 
         } catch (QueryException $e) {
@@ -272,14 +309,16 @@ class CaracteristicaController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_caracteristicas_modificar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::INTEGER, ?::BOOLEAN, '
+                'SELECT inventarios.fn_caracteristicas_modificar(?::BIGINT, ?::BIGINT, ?::BIGINT, ?::TEXT[], ?::INTEGER, ?::BOOLEAN, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $id,
                     (int) $d['categoria_id'],
-                    $d['nombre'],
+                    (int) $d['nombre_id'],
+                    $this->literalArray($d['valores_lista'] ?? null),
                     isset($d['orden']) && $d['orden'] !== '' ? (int) $d['orden'] : null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    array_key_exists('requerido', $d) ? (bool) $d['requerido'] : false,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
@@ -366,6 +405,38 @@ class CaracteristicaController extends Controller
             return $this->errorResponse($mensaje, $codigo);
         } catch (Exception $e) {
             sistemaLog('error', 'Error en activarCaracteristica', ['message' => $e->getMessage(), 'id' => $id]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Marca o desmarca REQUERIDA; sin `requerido` en el cuerpo, alterna.
+     *
+     * Es la misma palanca que `activo` pero para otra pregunta: aquélla dice
+     * si se pide, ésta si se puede dejar en blanco. El mensaje avisa de
+     * cuántos productos de esa categoría la tienen vacía, porque a partir de
+     * ahí no se podrán guardar sin rellenarla.
+     */
+    public function requeridoCaracteristica(Request $request, $id)
+    {
+        try {
+            $datos = $this->datosDe($request);
+            $requerido = array_key_exists('requerido', $datos) ? (bool) $datos['requerido'] : null;
+
+            $result = DB::selectOne(
+                'SELECT inventarios.fn_caracteristicas_requerido(?::BIGINT, ?::BOOLEAN, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $requerido], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (QueryException $e) {
+            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($mensaje, $codigo);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en requeridoCaracteristica', ['message' => $e->getMessage(), 'id' => $id]);
             return $this->errorResponse($e->getMessage(), 500);
         }
     }
