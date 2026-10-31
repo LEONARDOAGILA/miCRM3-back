@@ -284,7 +284,21 @@ class ProductoController extends Controller
                 array_map('intval', explode(',', (string) $request->input('marca_ids', ''))),
                 fn ($id) => $id > 0
             )));
-            $categoria = $request->input('categoria_id');
+            // Las categorías, igual: llegan como «12,48». El árbol de la
+            // izquierda mete UNA y el panel de la derecha deja elegir varias;
+            // es el mismo filtro con dos mandos.
+            $categorias = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('categoria_ids', ''))),
+                fn ($id) => $id > 0
+            )));
+
+            // Los rangos. Abiertos por los dos lados: null en un extremo es
+            // «sin tope por ahí». Lo que no sea un número se ignora.
+            $num = fn ($v) => (is_numeric($v) ? (float) $v : null);
+            $precioMin = $num($request->input('precio_min'));
+            $precioMax = $num($request->input('precio_max'));
+            $costoMin  = $num($request->input('costo_min'));
+            $costoMax  = $num($request->input('costo_max'));
 
             // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
             // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
@@ -292,15 +306,16 @@ class ProductoController extends Controller
             $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT[], ?::BIGINT, ?::JSONB) as result',
+                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT[], ?::BIGINT[], ?::JSONB, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
                  (string) $request->input('search', ''),
                  // Sin marcas se manda NULL, no «{}»: los dos significan
                  // «todas» para la función, pero NULL se lee mejor en el log.
                  $marcas ? '{' . implode(',', $marcas) . '}' : null,
-                 ($categoria === null || $categoria === '') ? null : (int) $categoria,
-                 json_encode((object) $filtros)]
+                 $categorias ? '{' . implode(',', $categorias) . '}' : null,
+                 json_encode((object) $filtros),
+                 $precioMin, $precioMax, $costoMin, $costoMax]
             );
             $r = json_decode($result->result, true);
 
