@@ -30,7 +30,7 @@ class RouteServiceProvider extends ServiceProvider
         // });
 
         //lpaa -> codigo que controla 10000 solicitudos por minuto y por usuario
-        foreach (['api', 'auth', 'config', 'rh', 'ventas', 'inventarios', 'contabilidad', 'core'] as $key) {
+        foreach (['api', 'auth', 'config', 'rh', 'ventas', 'inventarios', 'contabilidad', 'core', 'reportes'] as $key) {
             RateLimiter::for($key, function (Request $request) {
                 return Limit::perMinute(10000)->by($request->user()?->id ?: $request->ip());
             });
@@ -131,6 +131,12 @@ class RouteServiceProvider extends ServiceProvider
                 ->middleware('contabilidad')
                 ->namespace($this->namespace)
                 ->group(base_path('routes/contabilidad.php'));
+
+            // Los tableros de reportería: leen y no escriben nada
+            Route::prefix('reportes')
+                ->middleware('reportes')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/reportes.php'));
 
 
             Route::middleware('web')

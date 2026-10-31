@@ -120,7 +120,7 @@ class ProductoController extends Controller
 
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
 
-    /** Los veintiún datos de la ficha, con sus castes, en el orden de las funciones. */
+    /** Los diecisiete datos de la ficha, con sus castes, en el orden de las funciones. */
     private const CASTS_DATOS = '
         ?::VARCHAR,   -- p_codigo
         ?::VARCHAR,   -- p_nombre
@@ -138,10 +138,6 @@ class ProductoController extends Controller
         ?::NUMERIC,   -- p_stock_maximo
         ?::BOOLEAN,   -- p_maneja_serie
         ?::INTEGER,   -- p_garantia_meses
-        ?::NUMERIC,   -- p_peso_kg
-        ?::NUMERIC,   -- p_alto_cm
-        ?::NUMERIC,   -- p_ancho_cm
-        ?::NUMERIC,   -- p_profundidad_cm
         ?::BOOLEAN,   -- p_activo
     ';
 
@@ -189,10 +185,6 @@ class ProductoController extends Controller
             'stock_maximo'   => 'nullable|numeric|min:0',
             'maneja_serie'   => 'nullable|boolean',
             'garantia_meses' => 'nullable|integer|min:0|max:600',
-            'peso_kg'        => 'nullable|numeric|min:0',
-            'alto_cm'        => 'nullable|numeric|min:0',
-            'ancho_cm'       => 'nullable|numeric|min:0',
-            'profundidad_cm' => 'nullable|numeric|min:0',
             'activo'         => 'nullable|boolean',
             // Lo que se rellenó de la plantilla de la categoría:
             //   [{ caracteristica_id, nombre, valor, orden }, …]
@@ -266,10 +258,6 @@ class ProductoController extends Controller
             $this->num($d['stock_maximo'] ?? null),
             array_key_exists('maneja_serie', $d) ? (bool) $d['maneja_serie'] : false,
             $this->num($d['garantia_meses'] ?? null) ?? 0,
-            $this->num($d['peso_kg'] ?? null),
-            $this->num($d['alto_cm'] ?? null),
-            $this->num($d['ancho_cm'] ?? null),
-            $this->num($d['profundidad_cm'] ?? null),
             array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
         ];
     }
