@@ -277,7 +277,13 @@ class ProductoController extends Controller
     public function allProductos(Request $request)
     {
         try {
-            $marca     = $request->input('marca_id');
+            // Varias marcas a la vez: llegan como «3,7,11». Se limpia a
+            // conciencia porque esto acaba en un literal de array de
+            // PostgreSQL: sólo enteros positivos, sin repetidos.
+            $marcas = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('marca_ids', ''))),
+                fn ($id) => $id > 0
+            )));
             $categoria = $request->input('categoria_id');
 
             // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
@@ -286,11 +292,13 @@ class ProductoController extends Controller
             $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT, ?::BIGINT, ?::JSONB) as result',
+                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT[], ?::BIGINT, ?::JSONB) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
                  (string) $request->input('search', ''),
-                 ($marca === null || $marca === '') ? null : (int) $marca,
+                 // Sin marcas se manda NULL, no «{}»: los dos significan
+                 // «todas» para la función, pero NULL se lee mejor en el log.
+                 $marcas ? '{' . implode(',', $marcas) . '}' : null,
                  ($categoria === null || $categoria === '') ? null : (int) $categoria,
                  json_encode((object) $filtros)]
             );
