@@ -12,8 +12,11 @@ Es de un solo proceso: cada petición carga Laravel entero (~250 ms). Cuando alg
 va lento, medir la consulta antes de culpar a la base — normalmente es el
 arranque, no el SQL.
 
-Aparte hay que tener corriendo `php artisan websockets:serve` (Pusher local en el
-6001) para las notificaciones.
+Aparte hay que tener corriendo `php artisan reverb:start` (servidor de websockets
+en el 6001) para las notificaciones. Desde el 31/10/2026 es **Reverb**, no el
+paquete `beyondcode/laravel-websockets`, que fue abandonado y topaba en Laravel
+10. Habla el mismo protocolo Pusher y ocupa el mismo puerto con las mismas
+credenciales, asi que el Echo del front no cambio.
 
 ## Base de datos
 
