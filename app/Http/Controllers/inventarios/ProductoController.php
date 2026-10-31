@@ -120,11 +120,18 @@ class ProductoController extends Controller
 
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
 
-    /** Los diecisiete datos de la ficha, con sus castes, en el orden de las funciones. */
+    /** Los veinte datos de la ficha, con sus castes, en el orden de las funciones. */
     private const CASTS_DATOS = '
         ?::VARCHAR,   -- p_codigo
         ?::VARCHAR,   -- p_nombre
         ?::VARCHAR,   -- p_codigo_barras
+        -- Los tres códigos alternos: la referencia con la que cada proveedor
+        -- llama a este mismo producto. Van aquí, pegados a los otros códigos,
+        -- y este orden es el de las funciones: si se mueve uno hay que mover
+        -- también el de parametros().
+        ?::VARCHAR,   -- p_codigo2
+        ?::VARCHAR,   -- p_codigo3
+        ?::VARCHAR,   -- p_codigo4
         ?::TEXT,      -- p_descripcion
         ?::BIGINT,    -- p_marca_id
         ?::BIGINT,    -- p_categoria_id
@@ -169,6 +176,11 @@ class ProductoController extends Controller
             'codigo'         => 'required|string|min:2|max:30',
             'nombre'         => 'required|string|min:3|max:150',
             'codigo_barras'  => 'nullable|string|max:50',
+            // Los del proveedor. Sin unicidad a propósito: dos proveedores
+            // distintos pueden usar la misma referencia para cosas distintas.
+            'codigo2'        => 'nullable|string|max:50',
+            'codigo3'        => 'nullable|string|max:50',
+            'codigo4'        => 'nullable|string|max:50',
             // HTML desde el editor: las etiquetas ocupan, y la columna es
             // `text` sin límite propio
             'descripcion'    => 'nullable|string|max:20000',
@@ -245,6 +257,9 @@ class ProductoController extends Controller
             $d['codigo'],
             $d['nombre'],
             $this->num($d['codigo_barras'] ?? null),
+            $this->num($d['codigo2'] ?? null),
+            $this->num($d['codigo3'] ?? null),
+            $this->num($d['codigo4'] ?? null),
             $this->num($d['descripcion'] ?? null),
             $this->num($d['marca_id'] ?? null),
             $this->num($d['categoria_id'] ?? null),
