@@ -56,6 +56,22 @@ trait ImagenesDelEcommerce
     }
 
     /**
+     * El logo de una marca, que NO está en esta carpeta.
+     *
+     * Vive en `img/marcas` porque es del catálogo de Inventarios, no de la
+     * tienda: la tienda sólo lo usa cuando la marca no tiene una imagen
+     * programada en fecha.
+     */
+    protected function urlLogoDeMarca(?string $nombre): ?string
+    {
+        $nombre = trim((string) $nombre);
+        if ($nombre === '') {
+            return null;
+        }
+        return rtrim(config('app.url'), '/') . '/storage/img/marcas/' . basename($nombre);
+    }
+
+    /**
      * Comprueba la imagen y la guarda. Devuelve el nombre del fichero, o un
      * mensaje de error si no vale.
      *

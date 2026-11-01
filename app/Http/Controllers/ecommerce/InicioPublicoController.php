@@ -68,6 +68,18 @@ class InicioPublicoController extends Controller
                             return $c;
                         }, $s['categorias']);
                     }
+                    // Las marcas traen dos candidatas en carpetas distintas: la
+                    // programada (img/ecommerce) y el logo del catálogo
+                    // (img/marcas). Aquí se queda UNA, que es lo que la tienda
+                    // sabe pintar; la programada manda mientras esté en fecha.
+                    if (isset($s['marcas']) && is_array($s['marcas'])) {
+                        $s['marcas'] = array_map(function ($m) {
+                            $m['imagen'] = $this->urlImagenEcommerce($m['imagen'] ?? null)
+                                        ?? $this->urlLogoDeMarca($m['logo'] ?? null);
+                            unset($m['logo']);
+                            return $m;
+                        }, $s['marcas']);
+                    }
                     return $s;
                 }, $datos['secciones'] ?? []);
 

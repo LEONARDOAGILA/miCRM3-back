@@ -12,6 +12,7 @@ use App\Http\Controllers\ecommerce\GaleriaPublicoController;
 use App\Http\Controllers\ecommerce\ImagenController;
 use App\Http\Controllers\ecommerce\InicioController;
 use App\Http\Controllers\ecommerce\InicioPublicoController;
+use App\Http\Controllers\ecommerce\MarcaWebController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
@@ -175,6 +176,37 @@ Route::group([
 ], function () {
     Route::get('listar', [ImagenController::class, 'listar']);   // ?buscar=
     Route::post('subir', [ImagenController::class, 'subir']);    // multipart, campo `imagen`
+});
+
+// ----------------------------------------------------------------------------
+// LAS MARCAS DE LA TIENDA (administración)
+// ----------------------------------------------------------------------------
+// El catálogo es de Inventarios; aquí sólo se decide qué marcas salen, con qué
+// nombre, en qué orden y con qué imagen. La imagen programada manda sobre el
+// logo del catálogo mientras esté en fecha.
+Route::group([
+    'prefix' => 'marcaWeb', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allMarcasWeb',        [MarcaWebController::class, 'allMarcasWeb']);
+    Route::post('editMarcaWeb/{id}',  [MarcaWebController::class, 'editMarcaWeb'])->whereNumber('id');
+    Route::post('ordenarMarcas',      [MarcaWebController::class, 'ordenarMarcas']);      // { ids: [...] }
+
+    // Las imágenes de cada marca, programadas por fechas. El fichero sube en
+    // multipart y acaba en storage/app/public/img/ecommerce.
+    Route::get('imagenesCuentas',     [MarcaWebController::class, 'imagenesCuentas']);
+    Route::get('imagenes/{marca}',    [MarcaWebController::class, 'imagenes'])->whereNumber('marca');
+    Route::post('addImagen/{marca}',  [MarcaWebController::class, 'addImagen'])->whereNumber('marca');
+    Route::post('editImagen/{marca}/{id}', [MarcaWebController::class, 'editImagen'])
+         ->whereNumber('marca')->whereNumber('id');
+    Route::post('activarImagen/{id}', [MarcaWebController::class, 'activarImagen'])->whereNumber('id');
+    Route::post('ordenarImagenes',    [MarcaWebController::class, 'ordenarImagenes']);    // { ids: [...] }
+    Route::delete('deleteImagen/{id}', [MarcaWebController::class, 'deleteImagen'])->whereNumber('id');
+
+    Route::get('papeleraImagenes/{marca}', [MarcaWebController::class, 'papeleraImagenes'])
+         ->whereNumber('marca');
+    Route::post('restaurarImagenes',  [MarcaWebController::class, 'restaurarImagenes']);  // { ids: [...] }
+    Route::post('vaciarImagenes/{marca}', [MarcaWebController::class, 'vaciarImagenes'])
+         ->whereNumber('marca');
 });
 
 // ----------------------------------------------------------------------------
