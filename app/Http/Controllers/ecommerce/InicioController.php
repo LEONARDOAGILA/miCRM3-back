@@ -44,6 +44,7 @@ use App\Http\Resources\ApiResponder;
  *                                                     rotulo_color?, rotulo_fuente?, alto?,
  *                                                     activo?, desde?, hasta? }
  *   POST ecommerce/inicio/activarSeccion/{clave}    { activo? }; sin ella, alterna
+ *   POST ecommerce/inicio/altoSeccion/{clave}       { alto }; sólo el alto
  *   POST ecommerce/inicio/ordenarSecciones          { claves: [...] }
  */
 class InicioController extends Controller
@@ -178,6 +179,33 @@ class InicioController extends Controller
                 'SELECT ecommerce.fn_inicio_seccion_activar(?::TEXT, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(string) $clave, $activo], $this->auditoria($request))
+            );
+            return $this->responder($result);
+        });
+    }
+
+    /**
+     * Sólo el alto, sin tocar lo demás.
+     *
+     * `editSeccion` guarda la sección entera —lo que no llegue se queda en
+     * NULL—, así que estirar una sección con el ratón desde el modelado por
+     * esa puerta le borraría el rótulo. Ésta cambia una cosa sola, como
+     * `activarSeccion`.
+     */
+    public function altoSeccion(Request $request, $clave)
+    {
+        return $this->ejecutar(function () use ($request, $clave) {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, ['alto' => 'required|string|max:10']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_inicio_seccion_alto(?::TEXT, ?::TEXT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(string) $clave, (string) $d['alto']], $this->auditoria($request))
             );
             return $this->responder($result);
         });

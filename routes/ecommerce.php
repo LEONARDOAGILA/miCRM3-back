@@ -133,6 +133,8 @@ Route::group([
          ->where('clave', '[a-z0-9_]+');                                            // { titulo?, subtitulo?, activo?, desde?, hasta? }
     Route::post('activarSeccion/{clave}',  [InicioController::class, 'activarSeccion'])
          ->where('clave', '[a-z0-9_]+');                                            // { activo? }; sin ella, alterna
+    Route::post('altoSeccion/{clave}',     [InicioController::class, 'altoSeccion'])
+         ->where('clave', '[a-z0-9_]+');                                            // { alto }; sólo el alto, sin tocar el rótulo
     Route::post('ordenarSecciones',        [InicioController::class, 'ordenarSecciones']);  // { claves: [...] }
 });
 
