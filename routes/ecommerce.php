@@ -95,6 +95,9 @@ Route::group([
     Route::get('allCategoriasWeb',       [CategoriaWebController::class, 'allCategoriasWeb']);
     Route::post('editCategoriaWeb/{id}', [CategoriaWebController::class, 'editCategoriaWeb'])->whereNumber('id');
 
+    // El orden de los circulos de la portada. Llega entero: todas las destacadas.
+    Route::post('ordenarDestacadas',     [CategoriaWebController::class, 'ordenarDestacadas']);  // { ids: [...] }
+
     // Las imágenes de cada categoría, programadas por fechas. El fichero sube
     // en multipart y acaba en storage/app/public/img/ecommerce.
     Route::get('imagenesCuentas',          [CategoriaWebController::class, 'imagenesCuentas']);

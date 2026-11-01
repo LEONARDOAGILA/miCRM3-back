@@ -153,6 +153,37 @@ class CategoriaWebController extends Controller
         }
     }
 
+    /**
+     * El orden de los círculos de la portada.
+     *
+     * LLEGA ENTERO: tienen que venir todas las destacadas. Mandar «ésta ahora
+     * es la primera» obligaría a recalcular aquí lo que en la pantalla ya
+     * está resuelto, y deja huecos en cuanto dos personas tocan a la vez.
+     */
+    public function ordenarDestacadas(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, ['ids' => 'required|array|min:1', 'ids.*' => 'integer']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_destacadas_ordenar(?::JSONB, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_values($d['ids']))], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            CategoriaWebPublicoController::limpiar();
+            InicioPublicoController::limpiar();
+
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
+
     // ================================================================
     // LAS IMÁGENES DE UNA CATEGORÍA
     // ================================================================
