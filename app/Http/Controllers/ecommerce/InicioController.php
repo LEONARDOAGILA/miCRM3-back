@@ -23,14 +23,26 @@ use App\Http\Resources\ApiResponder;
  * pintarla. Una clave nueva sin código que la pinte sería un hueco invisible,
  * y una borrada dejaría a la tienda pidiendo algo que ya no está.
  *
- * CADA SECCIÓN DICE DE DÓNDE COME, y hoy sólo los dos banners tienen fuente
- * —sus galerías—. Las demás esperan a que se traslade la suya: el catálogo,
- * las marcas de la tienda, el mosaico. La pantalla lo enseña tal cual en vez
- * de fingir que se pueden configurar, y la portada pública ya se salta la
- * sección que no tenga nada que enseñar.
+ * EL RÓTULO ES LO QUE LEE EL CLIENTE encima de la sección, y se escribe aquí:
+ * el texto y su pinta —tamaño, color y letra—. La pinta viaja en CLAVES
+ * («grande», «deportiva»), nunca en CSS: la base sólo admite las de su lista,
+ * así que por esta puerta no entra nada a la hoja de estilos de la tienda.
+ *
+ * CADA SECCIÓN DICE DE DÓNDE COME: las de banner, de su galería; las de
+ * categorías y marcas, de sus pantallas. Las que todavía esperan a que se
+ * traslade la suya lo enseñan tal cual, en vez de fingir que se pueden
+ * configurar, y la portada pública ya se salta la sección que no tenga nada
+ * que enseñar.
  *
  *   GET  ecommerce/inicio/allInicio
- *   POST ecommerce/inicio/editSeccion/{clave}       { titulo?, subtitulo?, activo?, desde?, hasta? }
+ * EL ALTO ES EL AIRE QUE OCUPA la sección, no el tamaño de lo que hay dentro:
+ * las fotos y las tarjetas siguen midiendo lo que miden. Forzarles un alto
+ * desde aquí las sacaría deformadas, y eso no se arregla luego desde una
+ * pantalla de administración.
+ *
+ *   POST ecommerce/inicio/editSeccion/{clave}       { titulo?, subtitulo?, rotulo_tamano?,
+ *                                                     rotulo_color?, rotulo_fuente?, alto?,
+ *                                                     activo?, desde?, hasta? }
  *   POST ecommerce/inicio/activarSeccion/{clave}    { activo? }; sin ella, alterna
  *   POST ecommerce/inicio/ordenarSecciones          { claves: [...] }
  */
@@ -122,12 +134,21 @@ class InicioController extends Controller
         return $this->ejecutar(function () use ($request, $clave) {
             $d = $this->datosDe($request);
 
+            // La lista de tamaños y letras no se repite aquí: la tiene la base,
+            // en la columna y en la función que guarda. Copiarla sería tener dos
+            // listas que un día dejan de decir lo mismo, y la de aquí no es la
+            // que manda. Lo que sí se mira es el largo, para que un campo
+            // absurdo no llegue a la base como una consulta enorme.
             $validator = Validator::make($d, [
-                'titulo'    => 'nullable|string|max:80',
-                'subtitulo' => 'nullable|string|max:80',
-                'activo'    => 'nullable|boolean',
-                'desde'     => 'nullable|string|max:30',
-                'hasta'     => 'nullable|string|max:30',
+                'titulo'        => 'nullable|string|max:80',
+                'subtitulo'     => 'nullable|string|max:80',
+                'rotulo_tamano' => 'nullable|string|max:10',
+                'rotulo_color'  => 'nullable|string|max:7',
+                'rotulo_fuente' => 'nullable|string|max:10',
+                'alto'          => 'nullable|string|max:10',
+                'activo'        => 'nullable|boolean',
+                'desde'         => 'nullable|string|max:30',
+                'hasta'         => 'nullable|string|max:30',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
