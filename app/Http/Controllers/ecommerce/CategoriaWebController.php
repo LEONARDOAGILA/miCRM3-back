@@ -118,20 +118,25 @@ class CategoriaWebController extends Controller
         try {
             $d = $this->datosDe($request);
 
-            // `destacada` va al final y SÓLO SI VIENE: sin ella la función se
-            // queda con la marca que ya tenía, para que quien sólo cambia el
-            // nombre no desmarque la categoría sin querer.
+            // Las dos marcas van al final y SÓLO SI VIENEN: sin ellas la
+            // función se queda con lo que ya había, para que quien sólo
+            // cambia el nombre no desmarque la categoría sin querer.
+            $marca = function (array $d, string $campo) {
+                return array_key_exists($campo, $d) && $d[$campo] !== null
+                    ? filter_var($d[$campo], FILTER_VALIDATE_BOOLEAN) : null;
+            };
+
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_categorias_web_guardar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR, '
-                . self::CASTS_AUDIT . ', ?::BOOLEAN) as result',
+                . self::CASTS_AUDIT . ', ?::BOOLEAN, ?::BOOLEAN) as result',
                 array_merge([
                     (int) $id,
                     array_key_exists('oculta', $d) ? (bool) $d['oculta'] : false,
                     isset($d['nombre_web']) && trim((string) $d['nombre_web']) !== ''
                         ? trim((string) $d['nombre_web']) : null,
                 ], $this->auditoria($request), [
-                    array_key_exists('destacada', $d) && $d['destacada'] !== null
-                        ? filter_var($d['destacada'], FILTER_VALIDATE_BOOLEAN) : null,
+                    $marca($d, 'destacada'),
+                    $marca($d, 'promocion'),
                 ])
             );
             $r = json_decode($result->result, true);
@@ -185,7 +190,36 @@ class CategoriaWebController extends Controller
     }
 
     /**
-     * El orden de las categorías en la tienda, dentro de UNA rama.
+     * El orden de las tarjetas de «Categorías en promoción».
+     *
+     * LLEGA ENTERO: tienen que venir todas las que están en promoción.
+     */
+    public function ordenarPromocion(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, ['ids' => 'required|array|min:1', 'ids.*' => 'integer']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_promocion_ordenar(?::JSONB, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_values($d['ids']))], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            CategoriaWebPublicoController::limpiar();
+            InicioPublicoController::limpiar();
+
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
+
+    /**
+     * El orden de las categorías en el MENÚ de la tienda, dentro de UNA rama.
      *
      * No hacen falta todas las hermanas: las que no salen en la tienda no
      * están en la pantalla, y exigirlas haría imposible ordenar las que sí.
