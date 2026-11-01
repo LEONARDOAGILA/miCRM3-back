@@ -81,6 +81,14 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 
+        // La página web. Sin autenticación en el grupo: la mitad de sus rutas
+        // las pide la TIENDA sin token (un visitante con su navegador). Las de
+        // administración llevan jwt.auth ruta a ruta, dentro del fichero.
+        'ecommerce' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':ecommerce',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
         'reportes' => [
             \Illuminate\Routing\Middleware\ThrottleRequests::class.':reportes',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,

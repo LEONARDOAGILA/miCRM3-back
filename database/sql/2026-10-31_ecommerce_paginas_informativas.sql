@@ -414,7 +414,7 @@ BEGIN
     GET DIAGNOSTICS v_cuantas = ROW_COUNT;
 
     RETURN jsonb_build_object('success', true,
-        'message', format('%s carpetas reordenadas', v_cuantas),
+        'message', CASE v_cuantas WHEN 1 THEN 'Carpeta movida' ELSE format('%s carpetas reordenadas', v_cuantas) END,
         'data', (ecommerce.fn_paginas_informativas_grupos_listar() -> 'data'));
 END;
 $function$;
@@ -456,8 +456,9 @@ BEGIN
      WHERE id = p_id;
 
     RETURN jsonb_build_object('success', true,
-        'message', CASE WHEN v_hijas = 0
-                        THEN format('Carpeta «%s» enviada a la papelera', v_nombre)
+        'message', CASE v_hijas
+                        WHEN 0 THEN format('Carpeta «%s» enviada a la papelera', v_nombre)
+                        WHEN 1 THEN format('Carpeta «%s» enviada a la papelera con su página', v_nombre)
                         ELSE format('Carpeta «%s» enviada a la papelera con sus %s páginas', v_nombre, v_hijas) END,
         'data', ecommerce.fn_paginas_informativas_grupos_json(p_id));
 END;
@@ -930,7 +931,7 @@ BEGIN
     GET DIAGNOSTICS v_cuantas = ROW_COUNT;
 
     RETURN jsonb_build_object('success', true,
-        'message', format('%s páginas reordenadas', v_cuantas),
+        'message', CASE v_cuantas WHEN 1 THEN 'Página movida' ELSE format('%s páginas reordenadas', v_cuantas) END,
         'data', (ecommerce.fn_paginas_informativas_listar() -> 'data'));
 END;
 $function$;
@@ -1009,7 +1010,7 @@ BEGIN
     END IF;
 
     RETURN jsonb_build_object('success', true,
-        'message', format('%s páginas restauradas', v_cuantas), 'data', NULL);
+        'message', CASE v_cuantas WHEN 1 THEN 'Página restaurada' ELSE format('%s páginas restauradas', v_cuantas) END, 'data', NULL);
 END;
 $function$;
 
@@ -1078,7 +1079,9 @@ BEGIN
     GET DIAGNOSTICS v_carpetas = ROW_COUNT;
 
     RETURN jsonb_build_object('success', true,
-        'message', format('Papelera vaciada: %s páginas y %s carpetas', v_paginas, v_carpetas),
+        'message', format('Papelera vaciada: %s y %s',
+                   CASE v_paginas WHEN 1 THEN '1 página' ELSE v_paginas || ' páginas' END,
+                   CASE v_carpetas WHEN 1 THEN '1 carpeta' ELSE v_carpetas || ' carpetas' END),
         'data', jsonb_build_object('paginas', v_paginas, 'carpetas', v_carpetas, 'ficheros', v_ficheros));
 END;
 $function$;
