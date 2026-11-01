@@ -20,6 +20,13 @@ use App\Http\Resources\ApiResponder;
  *   GET ecommerce/publico/imagenes/{nombre}
  *   GET ecommerce/publico/documentos/{nombre}
  *
+ * LAS DOS RUTAS LEEN DE LA MISMA CARPETA, `storage/app/ecommerce/imagenes`.
+ * Suena raro que un PDF salga de «imagenes», pero es donde están: el CRM
+ * viejo también lo guardaba todo junto en una sola carpeta, y los 194
+ * ficheros se copiaron así. Las dos rutas siguen existiendo porque la
+ * dirección dice qué es lo que se pide, y eso decide el tipo que se declara
+ * y qué extensiones se aceptan.
+ *
  * EL NOMBRE SE VALIDA, no se confía. Llega de la dirección, y un `..` por el
  * medio saca del directorio: la expresión sólo admite letras, números, punto y
  * guiones, y la extensión decide el tipo que se declara. `basename` además de
@@ -43,14 +50,17 @@ class ArchivoPublicoController extends Controller
         'pdf'  => 'application/pdf',
     ];
 
+    /** Donde están los ficheros de la página web, imágenes y PDF. */
+    public const CARPETA = 'ecommerce/imagenes';
+
     public function imagen($nombre)
     {
-        return $this->servir('imagenes', $nombre, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg']);
+        return $this->servir($nombre, ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg']);
     }
 
     public function documento($nombre)
     {
-        return $this->servir('documentos', $nombre, ['pdf']);
+        return $this->servir($nombre, ['pdf']);
     }
 
     /**
@@ -61,7 +71,7 @@ class ArchivoPublicoController extends Controller
      * pasa al traer la base de la oficina. 404 para que el navegador enseñe su
      * imagen rota y no un 500 en el registro cada vez que se abre la página.
      */
-    private function servir(string $carpeta, string $nombre, array $extensiones)
+    private function servir(string $nombre, array $extensiones)
     {
         $nombre = basename((string) $nombre);
 
@@ -74,9 +84,9 @@ class ArchivoPublicoController extends Controller
             return $this->errorResponse('Fichero no válido', 400);
         }
 
-        $ruta = storage_path('app/ecommerce/' . $carpeta . '/' . $nombre);
+        $ruta = storage_path('app/' . self::CARPETA . '/' . $nombre);
         if (!is_file($ruta)) {
-            Log::info('Fichero de la tienda no encontrado', ['ruta' => $carpeta . '/' . $nombre]);
+            Log::info('Fichero de la tienda no encontrado', ['fichero' => $nombre]);
             return $this->errorResponse('Fichero no encontrado', 404);
         }
 

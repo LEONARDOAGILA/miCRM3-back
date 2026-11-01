@@ -507,14 +507,18 @@ class PaginaInformativaController extends Controller
         }
     }
 
-    /** Borra un fichero de la tienda; se calla si ya no está. */
+    /**
+     * Borra un fichero de la tienda; se calla si ya no está.
+     *
+     * Imágenes y PDF viven en la MISMA carpeta (ver ArchivoPublicoController):
+     * es como lo guardaba el CRM viejo y como se copiaron los 194 ficheros.
+     */
     private function borrarArchivo(?string $nombre): void
     {
         $nombre = $this->nombreDeArchivo($nombre);
         if (!$nombre) { return; }
 
-        $carpeta = Str::endsWith(strtolower($nombre), '.pdf') ? 'documentos' : 'imagenes';
-        $ruta = storage_path('app/ecommerce/' . $carpeta . '/' . $nombre);
+        $ruta = storage_path('app/' . ArchivoPublicoController::CARPETA . '/' . $nombre);
         if (is_file($ruta)) { @unlink($ruta); }
     }
 
