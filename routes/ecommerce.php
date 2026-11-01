@@ -7,8 +7,10 @@ use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
 use App\Http\Controllers\ecommerce\EspanaMotosController;
 use App\Http\Controllers\ecommerce\EspanaMotosPublicoController;
+use App\Http\Controllers\ecommerce\GaleriaController;
 use App\Http\Controllers\ecommerce\GaleriaPublicoController;
 use App\Http\Controllers\ecommerce\ImagenController;
+use App\Http\Controllers\ecommerce\InicioController;
 use App\Http\Controllers\ecommerce\InicioPublicoController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
@@ -92,6 +94,51 @@ Route::group([
 ], function () {
     Route::get('allCategoriasWeb',       [CategoriaWebController::class, 'allCategoriasWeb']);
     Route::post('editCategoriaWeb/{id}', [CategoriaWebController::class, 'editCategoriaWeb'])->whereNumber('id');
+});
+
+// ----------------------------------------------------------------------------
+// LA PORTADA DE LA TIENDA (administración)
+// ----------------------------------------------------------------------------
+// Las secciones no se crean ni se borran: cada una existe porque la tienda sabe
+// pintarla. Lo que se administra es su orden, su título y su vigencia.
+Route::group([
+    'prefix' => 'inicio', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allInicio',                [InicioController::class, 'allInicio']);
+    Route::post('editSeccion/{clave}',     [InicioController::class, 'editSeccion'])
+         ->where('clave', '[a-z0-9_]+');                                            // { titulo?, subtitulo?, activo?, desde?, hasta? }
+    Route::post('activarSeccion/{clave}',  [InicioController::class, 'activarSeccion'])
+         ->where('clave', '[a-z0-9_]+');                                            // { activo? }; sin ella, alterna
+    Route::post('ordenarSecciones',        [InicioController::class, 'ordenarSecciones']);  // { claves: [...] }
+});
+
+// ----------------------------------------------------------------------------
+// LAS GALERÍAS (administración)
+// ----------------------------------------------------------------------------
+// Una galería es un sitio del diseño con su clave fija. El fichero no se sube
+// aquí: se elige de la biblioteca de imágenes y en la base va sólo el nombre.
+Route::group([
+    'prefix' => 'galeria', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allGalerias',          [GaleriaController::class, 'allGalerias']);
+    Route::get('getGaleria/{clave}',   [GaleriaController::class, 'getGaleria'])
+         ->where('clave', '[a-z0-9_]+');
+
+    Route::post('addImagen/{clave}',       [GaleriaController::class, 'addImagen'])
+         ->where('clave', '[a-z0-9_]+');
+    Route::post('editImagen/{clave}/{id}', [GaleriaController::class, 'editImagen'])
+         ->where('clave', '[a-z0-9_]+')->whereNumber('id');
+    Route::post('activarImagen/{id}',      [GaleriaController::class, 'activarImagen'])->whereNumber('id');
+    Route::post('ordenarImagenes',         [GaleriaController::class, 'ordenarImagenes']);   // { ids: [...] }
+    Route::delete('deleteImagen/{id}',     [GaleriaController::class, 'deleteImagen'])->whereNumber('id');
+
+    // La papelera es POR GALERÍA: el botón está dentro de una sola, y vaciar
+    // la de todas desde ahí haría justo lo que nadie quería.
+    Route::get('papelera/{clave}',         [GaleriaController::class, 'papelera'])
+         ->where('clave', '[a-z0-9_]+');
+    Route::post('restaurar',               [GaleriaController::class, 'restaurar']);         // { ids: [...] }
+    Route::post('vaciarPapelera/{clave}',  [GaleriaController::class, 'vaciarPapelera'])
+         ->where('clave', '[a-z0-9_]+');
 });
 
 // ----------------------------------------------------------------------------
