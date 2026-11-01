@@ -41,6 +41,7 @@ use App\Http\Resources\ApiResponder;
 class PiePaginaController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
 
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,
@@ -242,6 +243,62 @@ class PiePaginaController extends Controller
     // ================================================================
     // ORDEN
     // ================================================================
+
+    // ================================================================
+    // PAPELERA
+    // ================================================================
+
+    /** Un solo cesto: columnas y enlaces, que es como se ve en la pantalla. */
+    public function papelera()
+    {
+        return $this->ejecutar(function () {
+            $r = json_decode(DB::selectOne('SELECT ecommerce.fn_pie_papelera_listar() as result')->result, true);
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
+
+    /** { tipo: 'columna'|'enlace', id } */
+    public function restaurar(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $d = $this->datosDe($request);
+            $tipo = $d['tipo'] ?? null;
+            $id   = $d['id'] ?? null;
+
+            if (!in_array($tipo, ['columna', 'enlace'], true) || !$id) {
+                return $this->errorResponse('No se indicó qué restaurar', 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_pie_restaurar(?::TEXT, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([$tipo, (int) $id], $this->auditoria($request))
+            );
+            return $this->responder($result);
+        });
+    }
+
+    /**
+     * Vaciar no tiene vuelta atrás, así que el permiso se comprueba AQUÍ:
+     * esconder el botón no impide la llamada.
+     */
+    public function vaciarPapelera(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            if ($no = $this->exigirPermiso('editPie', 'vaciar',
+                        'No tiene permiso para vaciar la papelera del pie')) {
+                return $no;
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_pie_papelera_vaciar(' . self::CASTS_AUDIT . ') as result',
+                $this->auditoria($request)
+            );
+            $r = json_decode($result->result, true);
+
+            sistemaLog('info', 'Papelera del pie vaciada', $r['data'] ?? []);
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
 
     public function ordenarColumnas(Request $request) { return $this->ordenar($request, 'columnas'); }
     public function ordenarEnlaces(Request $request)  { return $this->ordenar($request, 'enlaces'); }

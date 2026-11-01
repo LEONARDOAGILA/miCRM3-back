@@ -106,6 +106,12 @@ Route::group([
 
     Route::post('ordenarColumnas', [PiePaginaController::class, 'ordenarColumnas']); // { ids: [...] }
     Route::post('ordenarEnlaces',  [PiePaginaController::class, 'ordenarEnlaces']);  // { ids: [...] }
+
+    // La papelera es UNA para columnas y enlaces: borrar una columna se lleva
+    // los suyos y hay que verlos juntos.
+    Route::get('papelera',          [PiePaginaController::class, 'papelera']);
+    Route::post('restaurar',        [PiePaginaController::class, 'restaurar']);      // { tipo, id }
+    Route::delete('vaciarPapelera', [PiePaginaController::class, 'vaciarPapelera']); // permiso «vaciar»
 });
 
 // ----------------------------------------------------------------------------
