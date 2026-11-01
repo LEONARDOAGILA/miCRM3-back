@@ -9,6 +9,7 @@ use App\Http\Controllers\ecommerce\InicioPublicoController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
+use App\Http\Controllers\ecommerce\ResumenController;
 use App\Http\Controllers\ecommerce\SeccionPublicaController;
 
 // ============================================================================
@@ -63,6 +64,16 @@ Route::group(['prefix' => 'publico'], function () {
     Route::get('documentos',       [PaginaInformativaPublicoController::class, 'documentos']);
     Route::get('paginas/{clave}',  [PaginaInformativaPublicoController::class, 'pagina'])
          ->where('clave', '[a-z0-9_-]+');
+});
+
+// ----------------------------------------------------------------------------
+// LA PORTADA DEL MÓDULO
+// ----------------------------------------------------------------------------
+// Las once tarjetas con su conteo, en una sola llamada.
+Route::group([
+    'prefix' => 'resumen', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('getResumen', [ResumenController::class, 'getResumen']);
 });
 
 // ----------------------------------------------------------------------------
