@@ -97,6 +97,8 @@ Route::group([
 
     // El orden de los circulos de la portada. Llega entero: todas las destacadas.
     Route::post('ordenarDestacadas',     [CategoriaWebController::class, 'ordenarDestacadas']);  // { ids: [...] }
+    // El orden dentro de una rama: todas las hijas del mismo padre.
+    Route::post('ordenarCategorias',     [CategoriaWebController::class, 'ordenarCategorias']);  // { ids: [...] }
 
     // Las imágenes de cada categoría, programadas por fechas. El fichero sube
     // en multipart y acaba en storage/app/public/img/ecommerce.

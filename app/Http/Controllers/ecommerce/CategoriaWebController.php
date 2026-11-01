@@ -184,6 +184,38 @@ class CategoriaWebController extends Controller
         });
     }
 
+    /**
+     * El orden de las categorías en la tienda, dentro de UNA rama.
+     *
+     * No hacen falta todas las hermanas: las que no salen en la tienda no
+     * están en la pantalla, y exigirlas haría imposible ordenar las que sí.
+     * Lo que sí se exige es que todas sean del mismo padre, porque un orden
+     * que mezcle ramas no significa nada.
+     */
+    public function ordenarCategorias(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, ['ids' => 'required|array|min:1', 'ids.*' => 'integer']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_web_ordenar(?::JSONB, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_values($d['ids']))], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            CategoriaWebPublicoController::limpiar();
+            InicioPublicoController::limpiar();
+
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
+
     // ================================================================
     // LAS IMÁGENES DE UNA CATEGORÍA
     // ================================================================
