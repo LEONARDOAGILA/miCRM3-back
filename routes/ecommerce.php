@@ -5,6 +5,7 @@ use App\Http\Controllers\ecommerce\ArchivoPublicoController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
 use App\Http\Controllers\ecommerce\GaleriaPublicoController;
+use App\Http\Controllers\ecommerce\InicioPublicoController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
@@ -48,6 +49,10 @@ Route::group(['prefix' => 'publico'], function () {
     // El árbol de categorías: el desplegable del encabezado y los filtros de
     // /shop. Va anidado, no plano.
     Route::get('categorias-menu',  [CategoriaWebPublicoController::class, 'menu']);
+
+    // La portada: la lista de secciones en su orden. Crece sola segun se
+    // migran sus fuentes; la tienda ignora las claves que no conoce.
+    Route::get('inicio',           [InicioPublicoController::class, 'inicio']);
 
     // Los bloques de imágenes: el banner del inicio, las tarjetas, los logos
     // de «dónde pagar» del pie. La clave es el sitio del diseño.
