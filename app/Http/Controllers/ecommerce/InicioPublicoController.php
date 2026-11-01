@@ -33,6 +33,7 @@ class InicioPublicoController extends Controller
 {
     use ApiResponder;
     use \App\Http\Controllers\Concerns\ArchivosDeLaTienda;
+    use \App\Http\Controllers\Concerns\ImagenesDelEcommerce;
 
     public const CACHE_CLAVE = 'ecommerce.inicio.publico';
     /** Corta, como las galerías: las secciones y sus imágenes llevan vigencia. */
@@ -50,7 +51,9 @@ class InicioPublicoController extends Controller
                 $fila = DB::selectOne('SELECT ecommerce.fn_inicio_publico() as result');
                 $datos = json_decode($fila->result, true) ?: ['secciones' => []];
 
-                // La base guarda el nombre del fichero; la dirección se arma aquí
+                // La base guarda el nombre del fichero; la dirección se arma
+                // aquí. Las de las galerías y las de las categorías están en
+                // carpetas distintas, así que cada una con la suya.
                 $datos['secciones'] = array_map(function ($s) {
                     if (isset($s['imagenes']) && is_array($s['imagenes'])) {
                         $s['imagenes'] = array_map(function ($i) {
@@ -58,6 +61,12 @@ class InicioPublicoController extends Controller
                             $i['imagen_movil'] = $this->urlArchivo($i['imagen_movil'] ?? null, 'imagenes');
                             return $i;
                         }, $s['imagenes']);
+                    }
+                    if (isset($s['categorias']) && is_array($s['categorias'])) {
+                        $s['categorias'] = array_map(function ($c) {
+                            $c['imagen'] = $this->urlImagenEcommerce($c['imagen'] ?? null);
+                            return $c;
+                        }, $s['categorias']);
                     }
                     return $s;
                 }, $datos['secciones'] ?? []);

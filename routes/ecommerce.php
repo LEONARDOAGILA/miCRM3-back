@@ -94,6 +94,23 @@ Route::group([
 ], function () {
     Route::get('allCategoriasWeb',       [CategoriaWebController::class, 'allCategoriasWeb']);
     Route::post('editCategoriaWeb/{id}', [CategoriaWebController::class, 'editCategoriaWeb'])->whereNumber('id');
+
+    // Las imágenes de cada categoría, programadas por fechas. El fichero sube
+    // en multipart y acaba en storage/app/public/img/ecommerce.
+    Route::get('imagenesCuentas',          [CategoriaWebController::class, 'imagenesCuentas']);
+    Route::get('imagenes/{categoria}',     [CategoriaWebController::class, 'imagenes'])->whereNumber('categoria');
+    Route::post('addImagen/{categoria}',   [CategoriaWebController::class, 'addImagen'])->whereNumber('categoria');
+    Route::post('editImagen/{categoria}/{id}', [CategoriaWebController::class, 'editImagen'])
+         ->whereNumber('categoria')->whereNumber('id');
+    Route::post('activarImagen/{id}',      [CategoriaWebController::class, 'activarImagen'])->whereNumber('id');
+    Route::post('ordenarImagenes',         [CategoriaWebController::class, 'ordenarImagenes']);   // { ids: [...] }
+    Route::delete('deleteImagen/{id}',     [CategoriaWebController::class, 'deleteImagen'])->whereNumber('id');
+
+    Route::get('papeleraImagenes/{categoria}', [CategoriaWebController::class, 'papeleraImagenes'])
+         ->whereNumber('categoria');
+    Route::post('restaurarImagenes',       [CategoriaWebController::class, 'restaurarImagenes']); // { ids: [...] }
+    Route::post('vaciarImagenes/{categoria}', [CategoriaWebController::class, 'vaciarImagenes'])
+         ->whereNumber('categoria');
 });
 
 // ----------------------------------------------------------------------------

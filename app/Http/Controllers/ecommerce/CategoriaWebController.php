@@ -6,6 +6,7 @@ use Exception;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
@@ -14,8 +15,8 @@ use App\Http\Resources\ApiResponder;
  * LAS CATEGORÍAS DE LA TIENDA (ecommerce.categorias_web).
  *
  * El árbol es el del catálogo (inventarios.categorias). Lo que se administra
- * aquí es sólo lo que la tienda hace DISTINTO con él: qué ramas no salen y con
- * qué nombre se enseñan.
+ * aquí es sólo lo que la tienda hace DISTINTO con él: qué ramas no salen, con
+ * qué nombre se enseñan y QUÉ IMAGEN LES TOCA HOY.
  *
  * AQUÍ NO SE CREA, NI SE BORRA, NI SE REORDENA una categoría: eso es de
  * Inventarios. Mezclarlo daría dos sitios para cambiar el árbol y dos formas
@@ -25,17 +26,37 @@ use App\Http\Resources\ApiResponder;
  * mismo «la apagaste» que «no tiene ninguna categoría de producto debajo»,
  * porque la primera se arregla aquí y la segunda en el catálogo.
  *
- *   GET  ecommerce/categoriaWeb/allCategoriasWeb
- *   POST ecommerce/categoriaWeb/editCategoriaWeb/{id}   { oculta?, nombre_web? }
+ * LAS IMÁGENES SE PROGRAMAN POR FECHAS. Una categoría puede tener varias
+ * preparadas —la de siempre, la de navidad, la del día de la madre— y la
+ * tienda enseña la que toque hoy sin que nadie se acuerde de cambiarla. Y
+ * programar una imagen es además lo que mete la categoría en el mosaico de la
+ * portada: una sola decisión, no dos.
+ *
+ *   GET    ecommerce/categoriaWeb/allCategoriasWeb
+ *   POST   ecommerce/categoriaWeb/editCategoriaWeb/{id}      { oculta?, nombre_web? }
+ *
+ *   GET    ecommerce/categoriaWeb/imagenesCuentas
+ *   GET    ecommerce/categoriaWeb/imagenes/{categoria}
+ *   POST   ecommerce/categoriaWeb/addImagen/{categoria}      multipart: imagen + nombre?, desde?, hasta?, activo?
+ *   POST   ecommerce/categoriaWeb/editImagen/{categoria}/{id}  multipart; sin fichero, se queda el que tenía
+ *   POST   ecommerce/categoriaWeb/activarImagen/{id}         { activo? }; sin ella, alterna
+ *   POST   ecommerce/categoriaWeb/ordenarImagenes            { ids: [...] }
+ *   DELETE ecommerce/categoriaWeb/deleteImagen/{id}
+ *   GET    ecommerce/categoriaWeb/papeleraImagenes/{categoria}
+ *   POST   ecommerce/categoriaWeb/restaurarImagenes          { ids: [...] }
+ *   POST   ecommerce/categoriaWeb/vaciarImagenes/{categoria}
  */
 class CategoriaWebController extends Controller
 {
     use ApiResponder;
+    use \App\Http\Controllers\Concerns\ImagenesDelEcommerce;
 
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,
         'P0013' => 404,
         'P0015' => 422,
+        'P0016' => 422,
+        'P0019' => 404,
     ];
 
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
@@ -122,5 +143,273 @@ class CategoriaWebController extends Controller
             sistemaLog('error', 'Error en editCategoriaWeb', ['message' => $e->getMessage()]);
             return $this->errorResponse($e->getMessage(), 500);
         }
+    }
+
+    // ================================================================
+    // LAS IMÁGENES DE UNA CATEGORÍA
+    // ================================================================
+
+    private function ejecutar(callable $accion)
+    {
+        try {
+            return $accion();
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en las imágenes de categoría', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** La base guarda el nombre del fichero; la dirección se arma aquí. */
+    private function conUrl(?array $data): ?array
+    {
+        if ($data === null) {
+            return null;
+        }
+        $data['imagenes'] = array_map(function ($i) {
+            $i['imagen_url'] = $this->urlImagenEcommerce($i['imagen'] ?? null);
+            return $i;
+        }, $data['imagenes'] ?? []);
+
+        return $data;
+    }
+
+    /**
+     * Responde y tira la caché de la portada.
+     *
+     * LA DE LA PORTADA TAMBIÉN, y no sólo la de las categorías: el mosaico
+     * del inicio se arma con estas imágenes, así que cambiar una sin tirar
+     * esa caché deja el cambio sin salir y pareciendo que no se guardó.
+     */
+    private function responderImagenes($result)
+    {
+        $r = json_decode($result->result, true);
+
+        CategoriaWebPublicoController::limpiar();
+        InicioPublicoController::limpiar();
+
+        return $this->successResponse($this->conUrl($r['data'] ?? null), $r['message'] ?? 'Imágenes');
+    }
+
+    /** Cuántas imágenes tiene cada categoría: es la chapita del árbol. */
+    public function imagenesCuentas()
+    {
+        return $this->ejecutar(function () {
+            $r = json_decode(DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_cuentas() as result')->result, true);
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
+
+    public function imagenes($categoria)
+    {
+        return $this->ejecutar(function () use ($categoria) {
+            $r = json_decode(DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_listar(?::BIGINT) as result',
+                [(int) $categoria])->result, true);
+
+            return $this->successResponse($this->conUrl($r['data'] ?? null), $r['message']);
+        });
+    }
+
+    public function addImagen(Request $request, $categoria)
+    {
+        return $this->guardarImagen($request, (int) $categoria, null);
+    }
+
+    public function editImagen(Request $request, $categoria, $id)
+    {
+        return $this->guardarImagen($request, (int) $categoria, (int) $id);
+    }
+
+    /**
+     * Crea o modifica una imagen programada.
+     *
+     * EL FICHERO SÓLO HACE FALTA AL CREAR. Al modificar, cambiar las fechas o
+     * el nombre no debería obligar a volver a subir la misma foto, así que
+     * sin fichero se queda el que ya tenía.
+     *
+     * EL FICHERO VIEJO SE BORRA al reemplazarlo, pero sólo si ninguna otra
+     * fila lo usa: la misma imagen puede estar programada en dos categorías.
+     */
+    private function guardarImagen(Request $request, int $categoria, ?int $id)
+    {
+        return $this->ejecutar(function () use ($request, $categoria, $id) {
+            $validator = Validator::make($request->all(), [
+                'nombre' => 'nullable|string|max:100',
+                'desde'  => 'nullable|string|max:30',
+                'hasta'  => 'nullable|string|max:30',
+                'activo' => 'nullable|boolean',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $anterior = $id
+                ? DB::selectOne('SELECT imagen FROM ecommerce.categorias_imagenes
+                                  WHERE id = ? AND categoria_id = ? AND deleted_at IS NULL',
+                                [$id, $categoria])
+                : null;
+
+            if ($id && !$anterior) {
+                return $this->errorResponse('La imagen no existe en esta categoría', 404);
+            }
+
+            $fichero = $anterior->imagen ?? null;
+
+            if ($request->hasFile('imagen')) {
+                [$nuevo, $error] = $this->guardarImagenEcommerce($request->file('imagen'));
+                if ($error !== null) {
+                    return $this->errorResponse($error, 422);
+                }
+                $fichero = $nuevo;
+            } elseif ($fichero === null) {
+                return $this->errorResponse('Hace falta la imagen', 422);
+            }
+
+            $datos = [
+                'imagen' => $fichero,
+                'nombre' => $request->input('nombre'),
+                'desde'  => $request->input('desde'),
+                'hasta'  => $request->input('hasta'),
+                'activo' => filter_var($request->input('activo', true), FILTER_VALIDATE_BOOLEAN),
+            ];
+
+            try {
+                $result = DB::selectOne(
+                    'SELECT ecommerce.fn_categorias_imagenes_guardar(?::BIGINT, ?::BIGINT, ?::JSONB, '
+                    . self::CASTS_AUDIT . ') as result',
+                    array_merge([$id, $categoria, json_encode($datos)], $this->auditoria($request))
+                );
+            } catch (QueryException $e) {
+                // El fichero que se acababa de subir se queda huérfano si la
+                // fila no llegó a guardarse: fuera.
+                if ($request->hasFile('imagen')) {
+                    $this->borrarImagenEcommerce($fichero);
+                }
+                throw $e;
+            }
+
+            // El de antes, si lo reemplazaron y no lo usa nadie más
+            if ($anterior && $request->hasFile('imagen') && $anterior->imagen !== $fichero) {
+                $enUso = DB::selectOne('SELECT count(*) as n FROM ecommerce.categorias_imagenes
+                                         WHERE imagen = ?', [$anterior->imagen]);
+                if ((int) ($enUso->n ?? 0) === 0) {
+                    $this->borrarImagenEcommerce($anterior->imagen);
+                }
+            }
+
+            sistemaLog('info', 'Imagen de categoría guardada', ['categoria' => $categoria, 'id' => $id]);
+            return $this->responderImagenes($result);
+        });
+    }
+
+    public function activarImagen(Request $request, $id)
+    {
+        return $this->ejecutar(function () use ($request, $id) {
+            // Sin `activo`, alterna. Es lo que hace el interruptor de la lista.
+            $activo = $request->exists('activo') && $request->input('activo') !== null
+                ? filter_var($request->input('activo'), FILTER_VALIDATE_BOOLEAN) : null;
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_activar(?::BIGINT, ?::BOOLEAN, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $activo], $this->auditoria($request))
+            );
+            return $this->responderImagenes($result);
+        });
+    }
+
+    public function ordenarImagenes(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $validator = Validator::make($request->all(),
+                ['ids' => 'required|array|min:1', 'ids.*' => 'integer']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_values($request->input('ids')))], $this->auditoria($request))
+            );
+            return $this->responderImagenes($result);
+        });
+    }
+
+    public function deleteImagen(Request $request, $id)
+    {
+        return $this->ejecutar(function () use ($request, $id) {
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id], $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Imagen de categoría a la papelera', ['id' => (int) $id]);
+            return $this->responderImagenes($result);
+        });
+    }
+
+    public function papeleraImagenes($categoria)
+    {
+        return $this->ejecutar(function () use ($categoria) {
+            $r = json_decode(DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_papelera(?::BIGINT) as result',
+                [(int) $categoria])->result, true);
+
+            $data = array_map(function ($i) {
+                $i['imagen_url'] = $this->urlImagenEcommerce($i['imagen'] ?? null);
+                return $i;
+            }, $r['data'] ?? []);
+
+            return $this->successResponse($data, $r['message']);
+        });
+    }
+
+    public function restaurarImagenes(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $validator = Validator::make($request->all(),
+                ['ids' => 'required|array|min:1', 'ids.*' => 'integer']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_restaurar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_values($request->input('ids')))], $this->auditoria($request))
+            );
+            return $this->responderImagenes($result);
+        });
+    }
+
+    /**
+     * Vacía la papelera DE ESTA CATEGORÍA y borra sus ficheros.
+     *
+     * ES EL ÚNICO SITIO DONDE SE BORRA UN FICHERO. Mientras la fila se pueda
+     * restaurar, su imagen tiene que seguir ahí; aquí ya no se vuelve. La
+     * función devuelve sólo los ficheros que no usa ninguna otra fila.
+     */
+    public function vaciarImagenes(Request $request, $categoria)
+    {
+        return $this->ejecutar(function () use ($request, $categoria) {
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_categorias_imagenes_vaciar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $categoria], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            foreach (($r['data']['ficheros'] ?? []) as $f) {
+                $this->borrarImagenEcommerce($f);
+            }
+
+            CategoriaWebPublicoController::limpiar();
+            InicioPublicoController::limpiar();
+
+            sistemaLog('info', 'Papelera de imágenes vaciada', ['categoria' => (int) $categoria]);
+            return $this->successResponse($this->conUrl($r['data']['categoria'] ?? null), $r['message']);
+        });
     }
 }
