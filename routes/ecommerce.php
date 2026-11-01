@@ -2,8 +2,11 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ecommerce\ArchivoPublicoController;
+use App\Http\Controllers\ecommerce\EncabezadoController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
+use App\Http\Controllers\ecommerce\PiePaginaController;
+use App\Http\Controllers\ecommerce\SeccionPublicaController;
 
 // ============================================================================
 // MÓDULO ECOMMERCE. Prefijo global: /ecommerce (RouteServiceProvider).
@@ -36,10 +39,57 @@ Route::group(['prefix' => 'publico'], function () {
     Route::get('documentos/{nombre}', [ArchivoPublicoController::class, 'documento'])
          ->where('nombre', '[A-Za-z0-9][A-Za-z0-9._-]*\.pdf');
 
+    // El encabezado y el pie, en una sola llamada: es lo primero que pide la
+    // tienda al abrir cualquier página.
+    Route::get('secciones',        [SeccionPublicaController::class, 'listar']);
+
     // Páginas de texto
     Route::get('documentos',       [PaginaInformativaPublicoController::class, 'documentos']);
     Route::get('paginas/{clave}',  [PaginaInformativaPublicoController::class, 'pagina'])
          ->where('clave', '[a-z0-9_-]+');
+});
+
+// ----------------------------------------------------------------------------
+// ENCABEZADO (administración)
+// ----------------------------------------------------------------------------
+Route::group([
+    'prefix' => 'encabezado', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+
+    Route::get('getEncabezado',   [EncabezadoController::class, 'getEncabezado']);   // config + menú
+    Route::post('editEncabezado', [EncabezadoController::class, 'editEncabezado']);  // { config }
+
+    Route::post('addEnlace',           [EncabezadoController::class, 'addEnlace']);                        // { padre_id?, texto, … }
+    Route::post('editEnlace/{id}',     [EncabezadoController::class, 'editEnlace'])->whereNumber('id');
+    Route::post('activarEnlace/{id}',  [EncabezadoController::class, 'activarEnlace'])->whereNumber('id'); // { activo? }; sin ella, alterna
+    Route::post('ordenarEnlaces',      [EncabezadoController::class, 'ordenarEnlaces']);                   // { ids: [...] }
+    Route::delete('deleteEnlace/{id}', [EncabezadoController::class, 'deleteEnlace'])->whereNumber('id');  // se lleva sus desplegables
+
+    Route::get('papelera',          [EncabezadoController::class, 'papelera']);
+    Route::post('restaurar',        [EncabezadoController::class, 'restaurar']);      // { ids: [...] }
+    Route::delete('vaciarPapelera', [EncabezadoController::class, 'vaciarPapelera']); // permiso «vaciar»
+});
+
+// ----------------------------------------------------------------------------
+// PIE DE PÁGINA (administración)
+// ----------------------------------------------------------------------------
+Route::group([
+    'prefix' => 'pie', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+
+    Route::get('getPie',   [PiePaginaController::class, 'getPie']);    // config + columnas + enlaces
+    Route::post('editPie', [PiePaginaController::class, 'editPie']);   // { config }
+
+    Route::post('addColumna',           [PiePaginaController::class, 'addColumna']);
+    Route::post('editColumna/{id}',     [PiePaginaController::class, 'editColumna'])->whereNumber('id');
+    Route::delete('deleteColumna/{id}', [PiePaginaController::class, 'deleteColumna'])->whereNumber('id'); // se lleva sus enlaces
+
+    Route::post('addEnlace',           [PiePaginaController::class, 'addEnlace']);
+    Route::post('editEnlace/{id}',     [PiePaginaController::class, 'editEnlace'])->whereNumber('id');
+    Route::delete('deleteEnlace/{id}', [PiePaginaController::class, 'deleteEnlace'])->whereNumber('id');
+
+    Route::post('ordenarColumnas', [PiePaginaController::class, 'ordenarColumnas']); // { ids: [...] }
+    Route::post('ordenarEnlaces',  [PiePaginaController::class, 'ordenarEnlaces']);  // { ids: [...] }
 });
 
 // ----------------------------------------------------------------------------
