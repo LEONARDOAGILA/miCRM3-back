@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ecommerce\ArchivoPublicoController;
+use App\Http\Controllers\ecommerce\CategoriaWebController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
 use App\Http\Controllers\ecommerce\GaleriaPublicoController;
@@ -74,6 +75,17 @@ Route::group([
     'prefix' => 'resumen', 'middleware' => ['jwt.auth', 'usuario.activo']
 ], function () {
     Route::get('getResumen', [ResumenController::class, 'getResumen']);
+});
+
+// ----------------------------------------------------------------------------
+// CATEGORÍAS DE LA TIENDA (administración)
+// ----------------------------------------------------------------------------
+// El árbol es de Inventarios; aquí sólo se decide qué sale y con qué nombre.
+Route::group([
+    'prefix' => 'categoriaWeb', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allCategoriasWeb',       [CategoriaWebController::class, 'allCategoriasWeb']);
+    Route::post('editCategoriaWeb/{id}', [CategoriaWebController::class, 'editCategoriaWeb'])->whereNumber('id');
 });
 
 // ----------------------------------------------------------------------------
