@@ -5,7 +5,10 @@ use App\Http\Controllers\ecommerce\ArchivoPublicoController;
 use App\Http\Controllers\ecommerce\CategoriaWebController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
+use App\Http\Controllers\ecommerce\EspanaMotosController;
+use App\Http\Controllers\ecommerce\EspanaMotosPublicoController;
 use App\Http\Controllers\ecommerce\GaleriaPublicoController;
+use App\Http\Controllers\ecommerce\ImagenController;
 use App\Http\Controllers\ecommerce\InicioPublicoController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
@@ -52,6 +55,9 @@ Route::group(['prefix' => 'publico'], function () {
     // /shop. Va anidado, no plano.
     Route::get('categorias-menu',  [CategoriaWebPublicoController::class, 'menu']);
 
+    // El micro-sitio de España Motos. Sin publicar devuelve 404.
+    Route::get('espana-motos',     [EspanaMotosPublicoController::class, 'pagina']);
+
     // La portada: la lista de secciones en su orden. Crece sola segun se
     // migran sus fuentes; la tienda ignora las claves que no conoce.
     Route::get('inicio',           [InicioPublicoController::class, 'inicio']);
@@ -86,6 +92,41 @@ Route::group([
 ], function () {
     Route::get('allCategoriasWeb',       [CategoriaWebController::class, 'allCategoriasWeb']);
     Route::post('editCategoriaWeb/{id}', [CategoriaWebController::class, 'editCategoriaWeb'])->whereNumber('id');
+});
+
+// ----------------------------------------------------------------------------
+// LA BIBLIOTECA DE IMÁGENES (administración)
+// ----------------------------------------------------------------------------
+// Una sola carpeta para toda la página web: el fondo de España Motos, los
+// banners, las tarjetas del inicio y los logos del pie salen de aquí. Se sube
+// una vez y se elige donde haga falta.
+Route::group([
+    'prefix' => 'imagen', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('listar', [ImagenController::class, 'listar']);   // ?buscar=
+    Route::post('subir', [ImagenController::class, 'subir']);    // multipart, campo `imagen`
+});
+
+// ----------------------------------------------------------------------------
+// ESPAÑA MOTOS (administración)
+// ----------------------------------------------------------------------------
+// Las pestañas agrupan categorías del catálogo; las marcas salen de
+// inventarios.marcas. Se publica aparte, con su propia palanca.
+Route::group([
+    'prefix' => 'espanaMotos', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('getEspanaMotos',   [EspanaMotosController::class, 'getEspanaMotos']);
+    Route::post('editEspanaMotos', [EspanaMotosController::class, 'editEspanaMotos']);
+
+    Route::post('addPestana',           [EspanaMotosController::class, 'addPestana']);          // { nombre, categorias: [...] }
+    Route::post('editPestana/{id}',     [EspanaMotosController::class, 'editPestana'])->whereNumber('id');
+    Route::delete('deletePestana/{id}', [EspanaMotosController::class, 'deletePestana'])->whereNumber('id');
+
+    Route::post('addMarca',           [EspanaMotosController::class, 'addMarca']);               // { marca_id }
+    Route::delete('deleteMarca/{id}', [EspanaMotosController::class, 'deleteMarca'])->whereNumber('id');
+
+    Route::post('ordenarPestanas', [EspanaMotosController::class, 'ordenarPestanas']);           // { ids: [...] }
+    Route::post('ordenarMarcas',   [EspanaMotosController::class, 'ordenarMarcas']);             // { ids: [...] }
 });
 
 // ----------------------------------------------------------------------------
