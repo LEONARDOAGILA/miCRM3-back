@@ -2,7 +2,9 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ecommerce\ArchivoPublicoController;
+use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
+use App\Http\Controllers\ecommerce\GaleriaPublicoController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
@@ -42,6 +44,15 @@ Route::group(['prefix' => 'publico'], function () {
     // El encabezado y el pie, en una sola llamada: es lo primero que pide la
     // tienda al abrir cualquier página.
     Route::get('secciones',        [SeccionPublicaController::class, 'listar']);
+
+    // El árbol de categorías: el desplegable del encabezado y los filtros de
+    // /shop. Va anidado, no plano.
+    Route::get('categorias-menu',  [CategoriaWebPublicoController::class, 'menu']);
+
+    // Los bloques de imágenes: el banner del inicio, las tarjetas, los logos
+    // de «dónde pagar» del pie. La clave es el sitio del diseño.
+    Route::get('galerias/{clave}', [GaleriaPublicoController::class, 'listar'])
+         ->where('clave', '[a-z0-9_]+');
 
     // Páginas de texto
     Route::get('documentos',       [PaginaInformativaPublicoController::class, 'documentos']);
