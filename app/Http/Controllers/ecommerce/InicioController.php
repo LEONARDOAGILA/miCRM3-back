@@ -48,8 +48,17 @@ use App\Http\Resources\ApiResponder;
  * desde aquí las sacaría deformadas, y eso no se arregla luego desde una
  * pantalla de administración.
  *
+ * LOS BOTONES DE LA TARJETA LLEVAN FONDO Y LETRA, los dos opcionales. Sin
+ * fondo, el de la tienda; sin letra, la que se lea encima del fondo, que la
+ * calcula la tienda. Así cambiar un color no obliga a elegir dos, y elegir
+ * sólo la letra —el corazón rojo sobre el círculo blanco de siempre— es una
+ * sola decisión. Una combinación ilegible se avisa en la pantalla, no se
+ * prohíbe: igual que con el color del rótulo.
+ *
  *   POST ecommerce/inicio/editSeccion/{clave}       { titulo?, subtitulo?, rotulo_tamano?,
  *                                                     rotulo_color?, rotulo_fuente?, alto?,
+ *                                                     boton_<b>_color?, boton_<b>_texto?
+ *                                                       con <b>: favorito | carrito | whatsapp | tarjeta,
  *                                                     activo?, desde?, hasta? }
  *   POST ecommerce/inicio/activarSeccion/{clave}    { activo? }; sin ella, alterna
  *   POST ecommerce/inicio/altoSeccion/{clave}       { alto }; sólo el alto
@@ -155,6 +164,19 @@ class InicioController extends Controller
                 'rotulo_color'  => 'nullable|string|max:7',
                 'rotulo_fuente' => 'nullable|string|max:10',
                 'alto'          => 'nullable|string|max:10',
+                // El fondo de los cuatro botones de la tarjeta, en secciones
+                // de productos. 7 por «#rrggbb», y la base es quien dice si es
+                // un color de verdad.
+                'boton_favorito_color' => 'nullable|string|max:7',
+                'boton_carrito_color'  => 'nullable|string|max:7',
+                'boton_whatsapp_color' => 'nullable|string|max:7',
+                'boton_tarjeta_color'  => 'nullable|string|max:7',
+                // Y el de su letra. Sin él, la tienda pone la que se lea
+                // encima del fondo.
+                'boton_favorito_texto' => 'nullable|string|max:7',
+                'boton_carrito_texto'  => 'nullable|string|max:7',
+                'boton_whatsapp_texto' => 'nullable|string|max:7',
+                'boton_tarjeta_texto'  => 'nullable|string|max:7',
                 'activo'        => 'nullable|boolean',
                 'desde'         => 'nullable|string|max:30',
                 'hasta'         => 'nullable|string|max:30',
