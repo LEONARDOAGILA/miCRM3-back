@@ -19,6 +19,13 @@ use App\Http\Resources\ApiResponder;
  * ni una marca: ésas las decide quien da de alta el producto, y una sección
  * la decide quien vende, juntando cosas que el catálogo no junta.
  *
+ * CREAR UNA SECCIÓN LA PONE EN LA PORTADA. Cada escaparate es también una
+ * fila de `inicio_secciones`, al final y encendida, y desde «Inicio de la
+ * tienda» se le da su orden, su rótulo, su alto y sus fechas como a las ocho
+ * de siempre. Mandarla a la papelera la quita de la portada y restaurarla la
+ * devuelve con todo eso puesto; de eso se encargan las funciones de la base,
+ * para que no haya que acordarse aquí.
+ *
  * EL CATÁLOGO NO SE SIRVE DESDE AQUÍ. La rejilla del medio de la pantalla
  * pide los productos a `inventarios/producto/allProductos`, la misma que usa
  * la pantalla de productos: paginación, buscador, marcas, categorías por rama

@@ -19,9 +19,17 @@ use App\Http\Resources\ApiResponder;
  * marcas—. Cada una saca sus datos de otro sitio; aquí se guarda cuáles hay,
  * en qué orden van, qué se lee encima y entre qué fechas se ven.
  *
- * NO SE CREAN NI SE BORRAN SECCIONES: cada una existe porque la tienda sabe
- * pintarla. Una clave nueva sin código que la pinte sería un hueco invisible,
- * y una borrada dejaría a la tienda pidiendo algo que ya no está.
+ * POR ESTA PUERTA NO SE CREAN NI SE BORRAN SECCIONES, y hay dos clases:
+ *
+ *   · Las OCHO DE FÁBRICA existen porque la tienda sabe pintarlas. Una clave
+ *     nueva sin código que la pinte sería un hueco invisible, y una borrada
+ *     dejaría a la tienda pidiendo algo que ya no está.
+ *   · Las de PRODUCTOS son los escaparates de «Productos por sección»: se
+ *     crean y se borran allí —ProductoSeccionController—, y su fila en la
+ *     portada va y viene con ellas. Aquí se administran como las otras.
+ *
+ * `allInicio` las devuelve juntas, en su orden, con `fija` diciendo de cuál
+ * de las dos clases es cada una.
  *
  * EL RÓTULO ES LO QUE LEE EL CLIENTE encima de la sección, y se escribe aquí:
  * el texto y su pinta —tamaño, color y letra—. La pinta viaja en CLAVES
