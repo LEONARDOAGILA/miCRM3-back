@@ -16,6 +16,7 @@ use App\Http\Controllers\ecommerce\MarcaWebController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
+use App\Http\Controllers\ecommerce\ProductoSeccionController;
 use App\Http\Controllers\ecommerce\ResumenController;
 use App\Http\Controllers\ecommerce\SeccionPublicaController;
 
@@ -79,7 +80,7 @@ Route::group(['prefix' => 'publico'], function () {
 // ----------------------------------------------------------------------------
 // LA PORTADA DEL MÓDULO
 // ----------------------------------------------------------------------------
-// Las once tarjetas con su conteo, en una sola llamada.
+// Todas las tarjetas con su conteo, en una sola llamada.
 Route::group([
     'prefix' => 'resumen', 'middleware' => ['jwt.auth', 'usuario.activo']
 ], function () {
@@ -312,4 +313,42 @@ Route::group([
     Route::post('ordenarGrupos',     [PaginaInformativaController::class, 'ordenarGrupos']);   // { ids: [...] }
     Route::post('restaurarGrupo/{id}', [PaginaInformativaController::class, 'restaurarGrupo'])->whereNumber('id');
     Route::delete('deleteGrupo/{id}',  [PaginaInformativaController::class, 'deleteGrupo'])->whereNumber('id'); // se lleva sus páginas
+});
+
+// ----------------------------------------------------------------------------
+// SECCIONES DE PRODUCTOS (administración)
+// ----------------------------------------------------------------------------
+// Escaparates armados a mano: «Los más vendidos», «Ofertas de navidad». La
+// sección sólo tiene nombre, orden y vigencia; lo que lleva dentro va en el
+// cruce, y entra de uno en uno o de golpe por filtro.
+//
+// EL CATÁLOGO NO ESTÁ AQUÍ: la rejilla de la pantalla lo pide a
+// `inventarios/producto/allProductos`, la misma que usa la pantalla de
+// productos. Y `agregarFiltro` recibe EL FILTRO, no los ids: el navegador
+// sólo tiene la página que está viendo, y los 340 que cumplen el filtro los
+// resuelve la base con esa misma función de listado.
+Route::group([
+    'prefix' => 'productoSeccion', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+
+    Route::get('allSecciones',          [ProductoSeccionController::class, 'allSecciones']);
+    Route::post('addSeccion',           [ProductoSeccionController::class, 'addSeccion']);                       // { nombre, desde?, hasta? }
+    Route::post('editSeccion/{id}',     [ProductoSeccionController::class, 'editSeccion'])->whereNumber('id');
+    Route::post('activarSeccion/{id}',  [ProductoSeccionController::class, 'activarSeccion'])->whereNumber('id'); // { activo? }; sin ella, alterna
+    Route::post('ordenarSecciones',     [ProductoSeccionController::class, 'ordenarSecciones']);                  // { ids: [...] }
+    Route::delete('deleteSeccion/{id}', [ProductoSeccionController::class, 'deleteSeccion'])->whereNumber('id');  // a la papelera
+
+    Route::get('papeleraSecciones',       [ProductoSeccionController::class, 'papeleraSecciones']);
+    Route::post('restaurarSeccion/{id}',  [ProductoSeccionController::class, 'restaurarSeccion'])->whereNumber('id');
+
+    // Lo que lleva dentro. `productos` trae las fichas completas —las mismas
+    // que el catálogo, para que la rejilla pinte igual las dos vistas— e
+    // `ids` sólo los números, que es lo que necesita el catálogo para marcar
+    // qué filas ya están dentro.
+    Route::get('productos/{id}',     [ProductoSeccionController::class, 'productos'])->whereNumber('id');
+    Route::get('ids/{id}',           [ProductoSeccionController::class, 'ids'])->whereNumber('id');
+    Route::post('agregar/{id}',      [ProductoSeccionController::class, 'agregar'])->whereNumber('id');       // { producto_ids: [...] }
+    Route::post('quitar/{id}',       [ProductoSeccionController::class, 'quitar'])->whereNumber('id');        // { producto_ids: [...] }
+    Route::post('ordenar/{id}',      [ProductoSeccionController::class, 'ordenar'])->whereNumber('id');       // { producto_ids: [...] }
+    Route::post('agregarFiltro/{id}', [ProductoSeccionController::class, 'agregarFiltro'])->whereNumber('id'); // { search?, marca_ids?, … }
 });

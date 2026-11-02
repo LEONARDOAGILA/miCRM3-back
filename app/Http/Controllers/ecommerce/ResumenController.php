@@ -12,7 +12,7 @@ use App\Http\Resources\ApiResponder;
  *
  *   GET ecommerce/resumen/getResumen
  *
- * UNA SOLA LLAMADA para las once tarjetas. El CRM viejo pedía una por
+ * UNA SOLA LLAMADA para todas las tarjetas. El CRM viejo pedía una por
  * tarjeta: la portada parpadeaba mientras iban llegando y, con una sola
  * caída, esa tarjeta se quedaba en «No se pudo cargar» para siempre. Aquí
  * todo sale de una consulta; si falla, falla la portada entera y se ve.
