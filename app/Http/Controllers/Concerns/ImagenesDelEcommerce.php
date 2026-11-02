@@ -72,6 +72,25 @@ trait ImagenesDelEcommerce
     }
 
     /**
+     * La foto de un producto, que TAMPOCO está en esta carpeta.
+     *
+     * Vive en `img/productos` porque es del catálogo de Inventarios: la sube
+     * quien da de alta el producto, no quien arma la tienda. Se sirve por el
+     * mismo enlace `public/storage`, así que aquí sólo hay que poner delante
+     * la dirección del servidor; `inventarios/producto/getImagen/{id}` sirve
+     * la misma foto, pero pasando por PHP en cada una, y en una fila de
+     * productos eso son diez peticiones al framework para nada.
+     */
+    protected function urlImagenDeProducto(?string $nombre): ?string
+    {
+        $nombre = trim((string) $nombre);
+        if ($nombre === '') {
+            return null;
+        }
+        return rtrim(config('app.url'), '/') . '/storage/img/productos/' . basename($nombre);
+    }
+
+    /**
      * Comprueba la imagen y la guarda. Devuelve el nombre del fichero, o un
      * mensaje de error si no vale.
      *

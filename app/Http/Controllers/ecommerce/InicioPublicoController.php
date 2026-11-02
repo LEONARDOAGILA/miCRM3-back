@@ -19,11 +19,18 @@ use App\Http\Resources\ApiResponder;
  * así que esto puede ir creciendo según se trasladen sus fuentes sin que haya
  * que tocar la tienda.
  *
- * HOY SALEN LAS DOS DE BANNER. Las otras seis —categorías destacadas,
- * mosaico, ofertas de la semana, grilla, bloques y marcas— tiran de cosas que
- * aún no están migradas (el catálogo, sobre todo) y se caen solas: una
- * sección sin nada que enseñar no se manda, porque dejaría un hueco con su
- * título y nada debajo.
+ * SALEN LAS QUE YA TIENEN DE DÓNDE SACAR DATOS: las dos de banner, las
+ * categorías destacadas, el mosaico, las marcas y las SECCIONES DE PRODUCTOS.
+ * Las tres que faltan —ofertas de la semana, grilla y bloques— tiran del
+ * catálogo, que aún no está migrado, y se caen solas: una sección sin nada que
+ * enseñar no se manda, porque dejaría un hueco con su título y nada debajo.
+ *
+ * LAS SECCIONES DE PRODUCTOS VIAJAN CON LA FOTO Y EL NOMBRE, y nada más. La
+ * tarjeta de la tienda lleva además precio, descuento y existencias, y de eso
+ * el catálogo no tiene nada todavía: media tarjeta sacaría todo «Agotado» y a
+ * $0. Todas van con la clave `productos` y su `id`: la tienda conmuta por la
+ * clave para saber qué pieza pintar, y una clave distinta por sección la
+ * obligaría a adivinar.
  *
  * `ahora` VA SIEMPRE Y FUERA DE LA CACHÉ. Es la hora del SERVIDOR, y la usa la
  * cuenta regresiva de las ofertas: si se tomara la del navegador, cualquiera
@@ -67,6 +74,14 @@ class InicioPublicoController extends Controller
                             $c['imagen'] = $this->urlImagenEcommerce($c['imagen'] ?? null);
                             return $c;
                         }, $s['categorias']);
+                    }
+                    // Las secciones de productos: de la base viene el nombre
+                    // del fichero de la foto, y la carpeta es la del catálogo.
+                    if (isset($s['productos']) && is_array($s['productos'])) {
+                        $s['productos'] = array_map(function ($p) {
+                            $p['imagen'] = $this->urlImagenDeProducto($p['imagen'] ?? null);
+                            return $p;
+                        }, $s['productos']);
                     }
                     // Las marcas traen dos candidatas en carpetas distintas: la
                     // programada (img/ecommerce) y el logo del catálogo

@@ -115,6 +115,14 @@ class ProductoSeccionController extends Controller
     private function responder($result)
     {
         $r = json_decode($result->result, true);
+
+        // Lo que ve la tienda cambia con cualquiera de estas acciones, y no
+        // sólo al crear o borrar una sección: meterle un producto cambia lo
+        // que se pinta en la portada igual que renombrarla. La portada pública
+        // se guarda un minuto, así que sin esto se queda enseñando la lista de
+        // antes y parece que el cambio no se guardó.
+        InicioPublicoController::limpiar();
+
         return $this->successResponse($r['data'] ?? null, $r['message'] ?? 'Secciones de productos');
     }
 
