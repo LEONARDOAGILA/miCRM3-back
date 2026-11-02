@@ -76,10 +76,13 @@ class InicioPublicoController extends Controller
                         }, $s['categorias']);
                     }
                     // Las secciones de productos: de la base viene el nombre
-                    // del fichero de la foto, y la carpeta es la del catálogo.
+                    // del fichero de cada foto, y la carpeta es la del
+                    // catálogo. Son dos: la que se ve y la que sale al pasar
+                    // el mouse por encima.
                     if (isset($s['productos']) && is_array($s['productos'])) {
                         $s['productos'] = array_map(function ($p) {
-                            $p['imagen'] = $this->urlImagenDeProducto($p['imagen'] ?? null);
+                            $p['imagen']            = $this->urlImagenDeProducto($p['imagen'] ?? null);
+                            $p['imagen_secundaria'] = $this->urlImagenDeProducto($p['imagen_secundaria'] ?? null);
                             return $p;
                         }, $s['productos']);
                     }
