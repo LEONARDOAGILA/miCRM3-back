@@ -167,13 +167,18 @@ class MarcaWebController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_marcas_web_guardar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR, '
-                . self::CASTS_AUDIT . ') as result',
+                . self::CASTS_AUDIT . ', ?::BOOLEAN) as result',
                 array_merge([
                     (int) $id,
                     array_key_exists('oculta', $d) ? (bool) $d['oculta'] : false,
                     isset($d['nombre_web']) && trim((string) $d['nombre_web']) !== ''
                         ? trim((string) $d['nombre_web']) : null,
-                ], $this->auditoria($request))
+                ], $this->auditoria($request), [
+                    // NULL cuando no viene: es «no me la toques». Así una
+                    // pantalla que no conozca la promoción no la apaga sin
+                    // querer al guardar el nombre.
+                    array_key_exists('promocion', $d) ? (bool) $d['promocion'] : null,
+                ])
             );
             $r = json_decode($result->result, true);
 
@@ -205,6 +210,40 @@ class MarcaWebController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_marcas_web_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_values($d['ids']))], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            InicioPublicoController::limpiar();
+
+            $data = array_map(function ($m) {
+                $m['logo_url'] = $this->urlLogoDeMarca($m['logo'] ?? null);
+                return $m;
+            }, $r['data'] ?? []);
+
+            return $this->successResponse($data, $r['message']);
+        });
+    }
+
+    /**
+     * El orden de los carteles de «Marcas en promoción».
+     *
+     * ES OTRO ORDEN QUE EL DE «Nuestras marcas»: son dos secciones distintas
+     * de la portada y una marca puede estar en las dos, en distinto puesto.
+     */
+    public function ordenarPromocion(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, ['ids' => 'required|array|min:1', 'ids.*' => 'integer']);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_marcas_promocion_ordenar(?::JSONB, '
+                . self::CASTS_AUDIT . ') as result',
                 array_merge([json_encode(array_values($d['ids']))], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);

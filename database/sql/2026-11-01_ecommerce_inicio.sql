@@ -98,6 +98,12 @@ BEGIN
            s.ise_orden, s.ise_activo, s.ise_desde, s.ise_hasta,
            COALESCE(s.ise_fecha_modificacion, CURRENT_TIMESTAMP)
       FROM ecommerce.inicio_seccion s
+      -- Estas tres se quitaron de la portada el 2026-11-02 porque nunca
+      -- tuvieron de dónde sacar datos y las secciones de productos hacen lo
+      -- mismo (2026-11-02_ecommerce_inicio_quitar_secciones_sin_fuente.sql).
+      -- Sin esto, volver a pasar este fichero las resucitaría: `ON CONFLICT
+      -- DO NOTHING` sólo protege a las que siguen estando.
+     WHERE s.ise_clave NOT IN ('bloques', 'ofertas_flash', 'grilla')
      ON CONFLICT (clave) DO NOTHING;
     GET DIAGNOSTICS v = ROW_COUNT;
 

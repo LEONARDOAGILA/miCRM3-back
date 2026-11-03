@@ -83,8 +83,22 @@ class InicioPublicoController extends Controller
                         $s['productos'] = array_map(function ($p) {
                             $p['imagen']            = $this->urlImagenDeProducto($p['imagen'] ?? null);
                             $p['imagen_secundaria'] = $this->urlImagenDeProducto($p['imagen_secundaria'] ?? null);
+                            // El logo de la marca está en OTRA carpeta: es del
+                            // catálogo de Inventarios, no de la tienda. Sin
+                            // logo queda null y la tarjeta escribe el nombre.
+                            $p['marca_logo']        = $this->urlLogoDeMarca($p['marca_logo'] ?? null);
                             return $p;
                         }, $s['productos']);
+                    }
+                    // La imagen de AL LADO de una sección de productos. La
+                    // base ya resolvió si va o no —sin fichero, `lado` sale
+                    // 'sola'—, así que aquí sólo se le pone la dirección.
+                    if (isset($s['imagen']) && is_array($s['imagen'])) {
+                        $s['imagen']['url'] = $this->urlImagenEcommerce($s['imagen']['archivo'] ?? null);
+                        // `archivo` y `elegido` son del CRM: el nombre del
+                        // fichero en el disco y el lado que se eligió aunque
+                        // todavía no haya imagen. La tienda pinta por `lado`
+                        unset($s['imagen']['archivo'], $s['imagen']['elegido']);
                     }
                     // Las marcas traen dos candidatas en carpetas distintas: la
                     // programada (img/ecommerce) y el logo del catálogo

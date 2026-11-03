@@ -136,6 +136,19 @@ Route::group([
          ->where('clave', '[a-z0-9_]+');                                            // { activo? }; sin ella, alterna
     Route::post('altoSeccion/{clave}',     [InicioController::class, 'altoSeccion'])
          ->where('clave', '[a-z0-9_]+');                                            // { alto }; sólo el alto, sin tocar el rótulo
+    // El FICHERO de la imagen de al lado va aparte: editSeccion escribe todos
+    // sus campos, así que guardar el rótulo la borraría
+    Route::post('imagenSeccion/{clave}',   [InicioController::class, 'imagenSeccion'])
+         ->where('clave', '[a-z0-9_]+');                                            // multipart: imagen
+    Route::delete('imagenSeccion/{clave}', [InicioController::class, 'quitarImagenSeccion'])
+         ->where('clave', '[a-z0-9_]+');
+    // Los banners SÍ se crean y se borran desde la portada: son una galería de
+    // imágenes con su sitio, y la tienda ya sabe pintarlos
+    Route::post('addBanner',               [InicioController::class, 'addBanner']);         // { nombre }
+    Route::post('nombreBanner/{clave}',    [InicioController::class, 'nombreBanner'])
+         ->where('clave', '[a-z0-9_]+');                                                    // { nombre }
+    Route::delete('deleteBanner/{clave}',  [InicioController::class, 'deleteBanner'])
+         ->where('clave', '[a-z0-9_]+');
     Route::post('ordenarSecciones',        [InicioController::class, 'ordenarSecciones']);  // { claves: [...] }
 });
 
@@ -193,6 +206,8 @@ Route::group([
     Route::get('allMarcasWeb',        [MarcaWebController::class, 'allMarcasWeb']);
     Route::post('editMarcaWeb/{id}',  [MarcaWebController::class, 'editMarcaWeb'])->whereNumber('id');
     Route::post('ordenarMarcas',      [MarcaWebController::class, 'ordenarMarcas']);      // { ids: [...] }
+    // El orden de los carteles de «Marcas en promoción», que es otro
+    Route::post('ordenarPromocion',   [MarcaWebController::class, 'ordenarPromocion']);   // { ids: [...] }
 
     // Las imágenes de cada marca, programadas por fechas. El fichero sube en
     // multipart y acaba en storage/app/public/img/ecommerce.

@@ -21,7 +21,7 @@ use App\Http\Resources\ApiResponder;
  *
  * CREAR UNA SECCIÓN LA PONE EN LA PORTADA. Cada escaparate es también una
  * fila de `inicio_secciones`, al final y encendida, y desde «Inicio de la
- * tienda» se le da su orden, su rótulo, su alto y sus fechas como a las ocho
+ * tienda» se le da su orden, su rótulo, su alto y sus fechas como a las cinco
  * de siempre. Mandarla a la papelera la quita de la portada y restaurarla la
  * devuelve con todo eso puesto; de eso se encargan las funciones de la base,
  * para que no haya que acordarse aquí.
