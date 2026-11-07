@@ -12,12 +12,20 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
 
 /**
- * LA PORTADA DE LA TIENDA (administración).
+ * LAS SECCIONES DE UN CUERPO DE LA TIENDA (administración).
  *
- * La portada no es una página: es una LISTA DE SECCIONES que se encienden, se
+ * Un cuerpo no es una página: es una LISTA DE SECCIONES que se encienden, se
  * apagan y se reordenan —banner, categorías destacadas, ofertas, mosaico,
  * marcas—. Cada una saca sus datos de otro sitio; aquí se guarda cuáles hay,
  * en qué orden van, qué se lee encima y entre qué fechas se ven.
+ *
+ * LOS CUERPOS SE ADMINISTRAN EN CuerpoController. Aquí se trabaja DENTRO de
+ * uno: `allInicio` sin `cuerpo_id` da el del principal, que es lo que pedía
+ * la pantalla cuando sólo había una portada.
+ *
+ * TODO VA POR EL `id` DE LA SECCIÓN, no por su clave. La clave es única dentro
+ * del cuerpo, no en la tabla: cada cuerpo tiene su «banner_principal» y sus
+ * «categorias_destacadas», así que una clave sola no dice de cuál se habla.
  *
  * POR ESTA PUERTA NO SE CREAN NI SE BORRAN SECCIONES, y hay dos clases:
  *
@@ -42,7 +50,7 @@ use App\Http\Resources\ApiResponder;
  * configurar, y la portada pública ya se salta la sección que no tenga nada
  * que enseñar.
  *
- *   GET  ecommerce/inicio/allInicio
+ *   GET  ecommerce/inicio/allInicio?cuerpo_id=3   sin él, el cuerpo principal
  * EL ALTO ES EL AIRE QUE OCUPA la sección, no el tamaño de lo que hay dentro:
  * las fotos y las tarjetas siguen midiendo lo que miden. Forzarles un alto
  * desde aquí las sacaría deformadas, y eso no se arregla luego desde una
@@ -55,19 +63,24 @@ use App\Http\Resources\ApiResponder;
  * sola decisión. Una combinación ilegible se avisa en la pantalla, no se
  * prohíbe: igual que con el color del rótulo.
  *
- *   POST ecommerce/inicio/editSeccion/{clave}       { titulo?, subtitulo?, rotulo_tamano?,
+ *   POST ecommerce/inicio/editSeccion/{id}          { titulo?, subtitulo?, rotulo_tamano?,
  *                                                     rotulo_color?, rotulo_fuente?, alto?,
  *                                                     boton_<b>_color?, boton_<b>_texto?
  *                                                       con <b>: favorito | carrito | whatsapp | tarjeta,
  *                                                     descuento_color?, descuento_texto?,
  *                                                     etiqueta?, etiqueta_color?, etiqueta_texto?,
  *                                                     tarjeta_fondo_color?, tarjeta_borde_color?,
- *                                                     activo?, desde?, hasta? }
- *   POST ecommerce/inicio/activarSeccion/{clave}    { activo? }; sin ella, alterna
- *   POST ecommerce/inicio/altoSeccion/{clave}       { alto }; sólo el alto
- *   POST ecommerce/inicio/imagenSeccion/{clave}     multipart: imagen; la de al lado de una sección de productos
- *   DELETE ecommerce/inicio/imagenSeccion/{clave}   la quita
- *   POST ecommerce/inicio/ordenarSecciones          { claves: [...] }
+ *                                                     alcance?, activo?, desde?, hasta? }
+ *   POST ecommerce/inicio/activarSeccion/{id}       { activo? }; sin ella, alterna
+ *   POST ecommerce/inicio/altoSeccion/{id}          { alto }; sólo el alto
+ *   POST ecommerce/inicio/imagenSeccion/{id}        multipart: imagen; la de al lado de una sección de productos
+ *   DELETE ecommerce/inicio/imagenSeccion/{id}      la quita
+ *   POST ecommerce/inicio/ordenarSecciones          { ids: [...], cuerpo_id? }
+ *
+ * EL ALCANCE dice de dónde saca lo que enseña una sección de categorías o de
+ * marcas: `tienda` son las destacadas y las marcas de siempre; `cuerpo`, lo
+ * que cuelga de la categoría o de la marca a la que apunta su cuerpo. En el
+ * principal, que no apunta a nada, da igual lo que ponga.
  *
  * EL FICHERO DE LA IMAGEN VA POR SU PROPIA PUERTA y no con `editSeccion`:
  * esa guarda todos sus campos sin mirar si vienen, así que un guardado que no
@@ -174,17 +187,22 @@ class InicioController extends Controller
         }
     }
 
-    public function allInicio()
+    /** Sin `cuerpo_id`, las del principal: es lo que pedía la pantalla de antes. */
+    public function allInicio(Request $request)
     {
-        return $this->ejecutar(function () {
-            $r = json_decode(DB::selectOne('SELECT ecommerce.fn_inicio_listar() as result')->result, true);
+        return $this->ejecutar(function () use ($request) {
+            $cuerpo = $request->filled('cuerpo_id') ? (int) $request->input('cuerpo_id') : null;
+
+            $r = json_decode(DB::selectOne(
+                'SELECT ecommerce.fn_inicio_listar(?::BIGINT) as result', [$cuerpo]
+            )->result, true);
             return $this->successResponse($this->conUrlDeImagen($r['data']), $r['message']);
         });
     }
 
-    public function editSeccion(Request $request, $clave)
+    public function editSeccion(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             $d = $this->datosDe($request);
 
             // La lista de tamaños y letras no se repite aquí: la tiene la base,
@@ -238,6 +256,9 @@ class InicioController extends Controller
                 // En qué forma se pintan las fichas de la sección (hoy sólo
                 // las categorías destacadas): círculo o cuadrado
                 'forma'                => 'nullable|string|max:10',
+                // De dónde salen las categorías o las marcas que enseña:
+                // «tienda» o «cuerpo». La lista la tiene la base.
+                'alcance'              => 'nullable|string|max:10',
                 'imagen_alt'           => 'nullable|string|max:120',
                 'imagen_enlace'        => 'nullable|string|max:250',
                 'imagen_nueva_pestana' => 'nullable|boolean',
@@ -250,19 +271,19 @@ class InicioController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_seccion_guardar(?::TEXT, ?::JSONB, '
+                'SELECT ecommerce.fn_inicio_seccion_guardar(?::BIGINT, ?::JSONB, '
                 . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $clave, json_encode($d)], $this->auditoria($request))
+                array_merge([(int) $id, json_encode($d)], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Sección de la portada guardada', ['seccion' => (string) $clave]);
+            sistemaLog('info', 'Sección de un cuerpo guardada', ['seccion' => (int) $id]);
             return $this->responder($result);
         });
     }
 
-    public function activarSeccion(Request $request, $clave)
+    public function activarSeccion(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             $d = $this->datosDe($request);
 
             // Sin `activo`, alterna. Es lo que hace el interruptor de la lista.
@@ -270,9 +291,9 @@ class InicioController extends Controller
                 ? filter_var($d['activo'], FILTER_VALIDATE_BOOLEAN) : null;
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_seccion_activar(?::TEXT, ?::BOOLEAN, '
+                'SELECT ecommerce.fn_inicio_seccion_activar(?::BIGINT, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $clave, $activo], $this->auditoria($request))
+                array_merge([(int) $id, $activo], $this->auditoria($request))
             );
             return $this->responder($result);
         });
@@ -286,9 +307,9 @@ class InicioController extends Controller
      * esa puerta le borraría el rótulo. Ésta cambia una cosa sola, como
      * `activarSeccion`.
      */
-    public function altoSeccion(Request $request, $clave)
+    public function altoSeccion(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             $d = $this->datosDe($request);
 
             $validator = Validator::make($d, ['alto' => 'required|string|max:10']);
@@ -297,9 +318,9 @@ class InicioController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_seccion_alto(?::TEXT, ?::TEXT, '
+                'SELECT ecommerce.fn_inicio_seccion_alto(?::BIGINT, ?::TEXT, '
                 . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $clave, (string) $d['alto']], $this->auditoria($request))
+                array_merge([(int) $id, (string) $d['alto']], $this->auditoria($request))
             );
             return $this->responder($result);
         });
@@ -311,9 +332,9 @@ class InicioController extends Controller
      * VA POR SU PROPIA PUERTA, no con `editSeccion`: aquélla escribe todos sus
      * campos vengan o no, así que guardar el rótulo borraría la imagen.
      */
-    public function imagenSeccion(Request $request, $clave)
+    public function imagenSeccion(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             if (!$request->hasFile('imagen')) {
                 return $this->errorResponse('Hace falta la imagen', 422);
             }
@@ -325,9 +346,9 @@ class InicioController extends Controller
 
             try {
                 $result = DB::selectOne(
-                    'SELECT ecommerce.fn_inicio_seccion_imagen(?::TEXT, ?::TEXT, '
+                    'SELECT ecommerce.fn_inicio_seccion_imagen(?::BIGINT, ?::TEXT, '
                     . self::CASTS_AUDIT . ') as result',
-                    array_merge([(string) $clave, $nuevo], $this->auditoria($request))
+                    array_merge([(int) $id, $nuevo], $this->auditoria($request))
                 );
             } catch (QueryException $e) {
                 // La fila no llegó a guardarse: el fichero recién subido se
@@ -341,13 +362,13 @@ class InicioController extends Controller
     }
 
     /** La quita de la sección y borra el fichero. */
-    public function quitarImagenSeccion(Request $request, $clave)
+    public function quitarImagenSeccion(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_seccion_imagen(?::TEXT, ?::TEXT, '
+                'SELECT ecommerce.fn_inicio_seccion_imagen(?::BIGINT, ?::TEXT, '
                 . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $clave, null], $this->auditoria($request))
+                array_merge([(int) $id, null], $this->auditoria($request))
             );
 
             return $this->responderImagen($result, null);
@@ -383,13 +404,13 @@ class InicioController extends Controller
     }
 
     /**
-     * Un banner nuevo en la portada.
+     * Un banner nuevo en un cuerpo.
      *
      * AQUÍ SÍ SE CREAN SECCIONES, y es la excepción: un banner no es más que
-     * una galería de imágenes con su sitio en la portada, y la tienda ya sabe
+     * una galería de imágenes con su sitio en la página, y la tienda ya sabe
      * pintarlo. Las demás clases de sección siguen sin crearse por esta
-     * puerta —las de fábrica porque son código, las de productos porque se
-     * arman en «Productos por sección»—.
+     * puerta —las de fábrica porque nacen con el cuerpo, las de productos
+     * porque se arman en «Productos por sección»—.
      *
      * Nace APAGADO y sin imágenes: se enciende cuando tenga algo que enseñar.
      */
@@ -398,25 +419,31 @@ class InicioController extends Controller
         return $this->ejecutar(function () use ($request) {
             $d = $this->datosDe($request);
 
-            $validator = Validator::make($d, ['nombre' => 'required|string|max:100']);
+            $validator = Validator::make($d, [
+                'nombre'    => 'required|string|max:100',
+                // Sin él, el principal: es donde iban cuando sólo había una portada
+                'cuerpo_id' => 'nullable|integer',
+            ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_banner_crear(?::TEXT, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $d['nombre']], $this->auditoria($request))
+                'SELECT ecommerce.fn_inicio_banner_crear(?::BIGINT, ?::TEXT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([isset($d['cuerpo_id']) ? (int) $d['cuerpo_id'] : null,
+                             (string) $d['nombre']], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Banner de la portada creado', ['nombre' => (string) $d['nombre']]);
+            sistemaLog('info', 'Banner creado', ['nombre' => (string) $d['nombre']]);
             return $this->responder($result);
         });
     }
 
     /** Le cambia el nombre. Va a la fila de la portada y a su galería. */
-    public function nombreBanner(Request $request, $clave)
+    public function nombreBanner(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             $d = $this->datosDe($request);
 
             $validator = Validator::make($d, ['nombre' => 'required|string|max:100']);
@@ -425,9 +452,9 @@ class InicioController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_banner_nombre(?::TEXT, ?::TEXT, '
+                'SELECT ecommerce.fn_inicio_banner_nombre(?::BIGINT, ?::TEXT, '
                 . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $clave, (string) $d['nombre']], $this->auditoria($request))
+                array_merge([(int) $id, (string) $d['nombre']], $this->auditoria($request))
             );
             return $this->responder($result);
         });
@@ -441,16 +468,89 @@ class InicioController extends Controller
      * forma que «vaciar la papelera» de una galería. La pantalla lo pregunta
      * diciendo cuántas imágenes se llevan por delante.
      */
-    public function deleteBanner(Request $request, $clave)
+    public function deleteBanner(Request $request, $id)
     {
-        return $this->ejecutar(function () use ($request, $clave) {
+        return $this->ejecutar(function () use ($request, $id) {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_banner_eliminar(?::TEXT, '
+                'SELECT ecommerce.fn_inicio_banner_eliminar(?::BIGINT, '
                 . self::CASTS_AUDIT . ') as result',
-                array_merge([(string) $clave], $this->auditoria($request))
+                array_merge([(int) $id], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Banner de la portada borrado', ['clave' => (string) $clave]);
+            sistemaLog('info', 'Banner de la portada borrado', ['seccion' => (int) $id]);
+            return $this->responder($result);
+        });
+    }
+
+    /**
+     * Los escaparates de «Productos por sección» que este cuerpo NO enseña.
+     *
+     * Con cuántos productos tiene cada uno y en cuántas páginas sale ya: uno
+     * vacío se puede añadir, pero la tienda se lo salta, y saberlo antes evita
+     * poner una sección que no se va a ver.
+     */
+    public function escaparatesDisponibles(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $cuerpo = $request->filled('cuerpo_id') ? (int) $request->input('cuerpo_id') : null;
+
+            $r = json_decode(DB::selectOne(
+                'SELECT ecommerce.fn_inicio_escaparates_disponibles(?::BIGINT) as result', [$cuerpo]
+            )->result, true);
+            return $this->successResponse($r['data'], $r['message']);
+        });
+    }
+
+    /**
+     * Enseña un escaparate en este cuerpo, al final y encendido.
+     *
+     * EL MISMO ESCAPARATE PUEDE ESTAR EN VARIAS PÁGINAS, cada una con su
+     * rótulo, sus colores y su sitio: lo que se repite es la fila, no los
+     * productos.
+     */
+    public function addEscaparate(Request $request)
+    {
+        return $this->ejecutar(function () use ($request) {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, [
+                'seccion_id' => 'required|integer',
+                'cuerpo_id'  => 'nullable|integer',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_inicio_escaparate_poner(?::BIGINT, ?::BIGINT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([isset($d['cuerpo_id']) ? (int) $d['cuerpo_id'] : null,
+                             (int) $d['seccion_id']], $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Escaparate añadido a un cuerpo',
+                       ['seccion' => (int) $d['seccion_id'], 'cuerpo' => $d['cuerpo_id'] ?? null]);
+            return $this->responder($result);
+        });
+    }
+
+    /**
+     * Lo quita de ESTA página. No borra el escaparate.
+     *
+     * Sus productos siguen en «Productos por sección» y se puede volver a
+     * poner; lo que se va es la fila, con el rótulo y los colores que eran de
+     * esta página.
+     */
+    public function quitarEscaparate(Request $request, $id)
+    {
+        return $this->ejecutar(function () use ($request, $id) {
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_inicio_escaparate_quitar(?::BIGINT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id], $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Escaparate quitado de un cuerpo', ['seccion' => (int) $id]);
             return $this->responder($result);
         });
     }
@@ -460,17 +560,23 @@ class InicioController extends Controller
         return $this->ejecutar(function () use ($request) {
             $d = $this->datosDe($request);
 
+            // El orden es DENTRO de un cuerpo: tienen que venir TODAS las
+            // suyas, y la base se queja si falta alguna o si llega una de otro
             $validator = Validator::make($d, [
-                'claves'   => 'required|array|min:1',
-                'claves.*' => 'string|max:50',
+                'ids'       => 'required|array|min:1',
+                'ids.*'     => 'integer',
+                'cuerpo_id' => 'nullable|integer',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([json_encode(array_values($d['claves']))], $this->auditoria($request))
+                'SELECT ecommerce.fn_inicio_ordenar(?::JSONB, ?::BIGINT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([json_encode(array_map('intval', array_values($d['ids']))),
+                             isset($d['cuerpo_id']) ? (int) $d['cuerpo_id'] : null],
+                            $this->auditoria($request))
             );
             return $this->responder($result);
         });

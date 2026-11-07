@@ -19,12 +19,17 @@ use App\Http\Resources\ApiResponder;
  * ni una marca: ésas las decide quien da de alta el producto, y una sección
  * la decide quien vende, juntando cosas que el catálogo no junta.
  *
- * CREAR UNA SECCIÓN LA PONE EN LA PORTADA. Cada escaparate es también una
- * fila de `inicio_secciones`, al final y encendida, y desde «Inicio de la
- * tienda» se le da su orden, su rótulo, su alto y sus fechas como a las cinco
- * de siempre. Mandarla a la papelera la quita de la portada y restaurarla la
- * devuelve con todo eso puesto; de eso se encargan las funciones de la base,
- * para que no haya que acordarse aquí.
+ * CREAR UNA SECCIÓN NO LA PONE EN NINGUNA PÁGINA. Aquí se decide qué
+ * productos van juntos; en qué páginas sale ese grupo se decide en «Cuerpos de
+ * la tienda», con «Escaparate», y puede salir en varias a la vez —en la de
+ * entrada y en la de Movilidad— cada una con su orden, su rótulo, su alto y
+ * sus fechas. Hasta el 2026-11-07 se metía sola al final de la portada, y eso
+ * era tomar por adelantado una decisión que no es de esta pantalla: lo que se
+ * armaba para otra página aparecía igual en la de entrada.
+ *
+ * MANDARLA A LA PAPELERA LA QUITA DE LAS PÁGINAS donde saliera, y restaurarla
+ * la devuelve a todas con su orden y su rótulo puestos; de eso se encargan las
+ * funciones de la base, para que no haya que acordarse aquí.
  *
  * EL CATÁLOGO NO SE SIRVE DESDE AQUÍ. La rejilla del medio de la pantalla
  * pide los productos a `inventarios/producto/allProductos`, la misma que usa
@@ -117,10 +122,11 @@ class ProductoSeccionController extends Controller
         $r = json_decode($result->result, true);
 
         // Lo que ve la tienda cambia con cualquiera de estas acciones, y no
-        // sólo al crear o borrar una sección: meterle un producto cambia lo
-        // que se pinta en la portada igual que renombrarla. La portada pública
-        // se guarda un minuto, así que sin esto se queda enseñando la lista de
-        // antes y parece que el cambio no se guardó.
+        // sólo al borrar una sección: meterle un producto cambia lo que se
+        // pinta en TODAS las páginas donde salga ese escaparate, igual que
+        // renombrarla. Cada página se guarda un minuto, así que sin esto se
+        // quedan enseñando la lista de antes y parece que el cambio no se
+        // guardó.
         InicioPublicoController::limpiar();
 
         return $this->successResponse($r['data'] ?? null, $r['message'] ?? 'Secciones de productos');

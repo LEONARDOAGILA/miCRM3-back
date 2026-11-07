@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ecommerce\ArchivoPublicoController;
 use App\Http\Controllers\ecommerce\CategoriaWebController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
+use App\Http\Controllers\ecommerce\CuerpoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
 use App\Http\Controllers\ecommerce\EspanaMotosController;
 use App\Http\Controllers\ecommerce\EspanaMotosPublicoController;
@@ -66,6 +67,11 @@ Route::group(['prefix' => 'publico'], function () {
     // migran sus fuentes; la tienda ignora las claves que no conoce.
     Route::get('inicio',           [InicioPublicoController::class, 'inicio']);
 
+    // Y cualquier otra página de secciones, por su dirección: /movilidad,
+    // /bajaj. La que no existe, está apagada o está en la papelera da 404.
+    Route::get('cuerpo/{ruta}',    [InicioPublicoController::class, 'cuerpo'])
+         ->where('ruta', '[a-z0-9][a-z0-9-]*');
+
     // Los bloques de imágenes: el banner del inicio, las tarjetas, los logos
     // de «dónde pagar» del pie. La clave es el sitio del diseño.
     Route::get('galerias/{clave}', [GaleriaPublicoController::class, 'listar'])
@@ -122,34 +128,71 @@ Route::group([
 });
 
 // ----------------------------------------------------------------------------
-// LA PORTADA DE LA TIENDA (administración)
+// LOS CUERPOS DE LA TIENDA (administración)
 // ----------------------------------------------------------------------------
-// Las secciones no se crean ni se borran: cada una existe porque la tienda sabe
-// pintarla. Lo que se administra es su orden, su título y su vigencia.
+// Un cuerpo es una página hecha de secciones. Uno es el PRINCIPAL y sale al
+// abrir la tienda; los demás se llegan por su dirección, y si apuntan a una
+// categoría o a una marca, el clic en ella lleva ahí en vez de a /shop.
+Route::group([
+    'prefix' => 'cuerpo', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allCuerpos',                [CuerpoController::class, 'allCuerpos']);
+    Route::post('addCuerpo',                [CuerpoController::class, 'addCuerpo']);        // { nombre, ruta, categoria_id?, marca_id?, … }
+    Route::post('editCuerpo/{id}',          [CuerpoController::class, 'editCuerpo'])->whereNumber('id');
+    Route::post('activarCuerpo/{id}',       [CuerpoController::class, 'activarCuerpo'])->whereNumber('id');
+    // Cuál es la entrada de la tienda. El de antes deja de serlo solo.
+    Route::post('principalCuerpo/{id}',     [CuerpoController::class, 'principalCuerpo'])->whereNumber('id');
+    Route::delete('deleteCuerpo/{id}',      [CuerpoController::class, 'deleteCuerpo'])->whereNumber('id');
+
+    Route::get('papelera',                  [CuerpoController::class, 'papelera']);
+    Route::post('restaurarCuerpo/{id}',     [CuerpoController::class, 'restaurarCuerpo'])->whereNumber('id');
+    // Sin ids: vacía la papelera entera, como el resto de las de la casa
+    Route::delete('vaciarPapelera',         [CuerpoController::class, 'vaciarPapelera']);
+});
+
+// ----------------------------------------------------------------------------
+// LAS SECCIONES DE UN CUERPO (administración)
+// ----------------------------------------------------------------------------
+// Las de fábrica no se crean ni se borran: cada una existe porque la tienda
+// sabe pintarla, y nacen con el cuerpo. Lo que se administra es su orden, su
+// título y su vigencia.
+//
+// TODO VA POR EL `id` DE LA SECCIÓN: la clave es única dentro del cuerpo, no
+// en la tabla —cada cuerpo tiene su «banner_principal»—, así que una clave
+// sola no diría de cuál se habla.
 Route::group([
     'prefix' => 'inicio', 'middleware' => ['jwt.auth', 'usuario.activo']
 ], function () {
-    Route::get('allInicio',                [InicioController::class, 'allInicio']);
-    Route::post('editSeccion/{clave}',     [InicioController::class, 'editSeccion'])
-         ->where('clave', '[a-z0-9_]+');                                            // { titulo?, subtitulo?, activo?, desde?, hasta? }
-    Route::post('activarSeccion/{clave}',  [InicioController::class, 'activarSeccion'])
-         ->where('clave', '[a-z0-9_]+');                                            // { activo? }; sin ella, alterna
-    Route::post('altoSeccion/{clave}',     [InicioController::class, 'altoSeccion'])
-         ->where('clave', '[a-z0-9_]+');                                            // { alto }; sólo el alto, sin tocar el rótulo
+    Route::get('allInicio',                [InicioController::class, 'allInicio']);  // ?cuerpo_id=; sin él, el principal
+    Route::post('editSeccion/{id}',        [InicioController::class, 'editSeccion'])
+         ->whereNumber('id');                                                        // { titulo?, subtitulo?, alcance?, activo?, desde?, hasta? }
+    Route::post('activarSeccion/{id}',     [InicioController::class, 'activarSeccion'])
+         ->whereNumber('id');                                                        // { activo? }; sin ella, alterna
+    Route::post('altoSeccion/{id}',        [InicioController::class, 'altoSeccion'])
+         ->whereNumber('id');                                                        // { alto }; sólo el alto, sin tocar el rótulo
     // El FICHERO de la imagen de al lado va aparte: editSeccion escribe todos
     // sus campos, así que guardar el rótulo la borraría
-    Route::post('imagenSeccion/{clave}',   [InicioController::class, 'imagenSeccion'])
-         ->where('clave', '[a-z0-9_]+');                                            // multipart: imagen
-    Route::delete('imagenSeccion/{clave}', [InicioController::class, 'quitarImagenSeccion'])
-         ->where('clave', '[a-z0-9_]+');
-    // Los banners SÍ se crean y se borran desde la portada: son una galería de
+    Route::post('imagenSeccion/{id}',      [InicioController::class, 'imagenSeccion'])
+         ->whereNumber('id');                                                        // multipart: imagen
+    Route::delete('imagenSeccion/{id}',    [InicioController::class, 'quitarImagenSeccion'])
+         ->whereNumber('id');
+    // Los banners SÍ se crean y se borran desde la pantalla: son una galería de
     // imágenes con su sitio, y la tienda ya sabe pintarlos
-    Route::post('addBanner',               [InicioController::class, 'addBanner']);         // { nombre }
-    Route::post('nombreBanner/{clave}',    [InicioController::class, 'nombreBanner'])
-         ->where('clave', '[a-z0-9_]+');                                                    // { nombre }
-    Route::delete('deleteBanner/{clave}',  [InicioController::class, 'deleteBanner'])
-         ->where('clave', '[a-z0-9_]+');
-    Route::post('ordenarSecciones',        [InicioController::class, 'ordenarSecciones']);  // { claves: [...] }
+    Route::post('addBanner',               [InicioController::class, 'addBanner']);   // { nombre, cuerpo_id? }
+    Route::post('nombreBanner/{id}',       [InicioController::class, 'nombreBanner'])
+         ->whereNumber('id');                                                         // { nombre }
+    Route::delete('deleteBanner/{id}',     [InicioController::class, 'deleteBanner'])
+         ->whereNumber('id');
+
+    // Los escaparates de «Productos por sección» se pueden enseñar en VARIAS
+    // páginas: aquí se añade uno a ésta y se quita de ésta. Quitarlo no lo
+    // borra; sus productos siguen en su pantalla.
+    Route::get('escaparatesDisponibles',   [InicioController::class, 'escaparatesDisponibles']); // ?cuerpo_id=
+    Route::post('addEscaparate',           [InicioController::class, 'addEscaparate']);  // { seccion_id, cuerpo_id? }
+    Route::delete('quitarEscaparate/{id}', [InicioController::class, 'quitarEscaparate'])
+         ->whereNumber('id');
+
+    Route::post('ordenarSecciones',        [InicioController::class, 'ordenarSecciones']);  // { ids: [...], cuerpo_id? }
 });
 
 // ----------------------------------------------------------------------------
