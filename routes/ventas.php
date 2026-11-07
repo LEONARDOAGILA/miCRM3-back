@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ventas\ClienteController;
+use App\Http\Controllers\ventas\GrupoClienteController;
 use App\Http\Controllers\ventas\GestionController;
 use App\Http\Controllers\ventas\WhatsappController;
 use App\Http\Controllers\ventas\CatalogoGestionController;
@@ -10,6 +11,7 @@ use App\Http\Controllers\ventas\ArchivoClienteController;
 use App\Http\Controllers\ventas\NotaClienteController;
 use App\Http\Controllers\ventas\ZonaController;
 use App\Http\Controllers\ventas\RecorridoController;
+use App\Http\Controllers\ventas\ProformaController;
 
 // ============================================================================
 // MÓDULO VENTAS. Prefijo global: /ventas (RouteServiceProvider).
@@ -17,6 +19,31 @@ use App\Http\Controllers\ventas\RecorridoController;
 // usuario.activo, salvo las rutas que consume <img src> (públicas, como
 // getImagenEmpleado).
 // ============================================================================
+
+// GRUPOS DE CLIENTES (árbol)
+// Agrupan las condiciones comerciales —forma de pago, cupo, días de crédito y
+// descuento— que casi siempre son las mismas para todo un grupo. Es el mismo
+// árbol de inventarios/categoria: no pagina y tiene su ruta `mover`, que es lo
+// que usa el arrastre de la rejilla.
+Route::group([
+    'prefix' => 'grupoCliente', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allGruposClientes',  [GrupoClienteController::class, 'allGruposClientes']);   // el árbol entero: ?activos=1 para sólo activos
+    Route::get('listGruposClientes', [GrupoClienteController::class, 'listGruposClientes']);  // lo mismo, para el selector de la ficha del cliente
+    Route::get('findByIdGrupoCliente/{id}', [GrupoClienteController::class, 'findByIdGrupoCliente']);
+    Route::post('addGrupoCliente',          [GrupoClienteController::class, 'addGrupoCliente']);
+    Route::post('editGrupoCliente/{id}',    [GrupoClienteController::class, 'editGrupoCliente']);
+    Route::post('activarGrupoCliente/{id}', [GrupoClienteController::class, 'activarGrupoCliente']); // { activo? }; sin ella, alterna
+    Route::post('moverGrupoCliente/{id}',   [GrupoClienteController::class, 'moverGrupoCliente']);   // { padre_id, antes_de }
+    Route::post('predeterminarGrupoCliente/{id}', [GrupoClienteController::class, 'predeterminarGrupoCliente']); // { predeterminado? }; sin ella, alterna
+    Route::delete('deleteGrupoCliente/{id}',[GrupoClienteController::class, 'deleteGrupoCliente']);  // a la papelera
+
+    // Papelera de reciclaje (borrado lógico: deleteGrupoCliente manda a la papelera)
+    Route::get('papelera', [GrupoClienteController::class, 'papelera']);
+    Route::post('restaurarGruposClientes', [GrupoClienteController::class, 'restaurarGruposClientes']); // { ids: [...] }
+    Route::post('eliminarDefinitivo', [GrupoClienteController::class, 'eliminarDefinitivo']);          // { ids: [...] }
+    Route::delete('vaciarPapelera', [GrupoClienteController::class, 'vaciarPapelera']);
+});
 
 // CLIENTES
 Route::group([
@@ -33,6 +60,7 @@ Route::group([
     Route::get('listContactos/{id}', [ClienteController::class, 'listContactos'])->middleware(['jwt.auth', 'usuario.activo']);        // personas de contacto
     Route::post('guardarContactos/{id}', [ClienteController::class, 'guardarContactos'])->middleware(['jwt.auth', 'usuario.activo']); // { contactos: [...] } sincroniza
     Route::post('guardarUbicacion/{id}', [ClienteController::class, 'guardarUbicacion'])->middleware(['jwt.auth', 'usuario.activo']); // los datos que trae el mapa
+    Route::post('guardarSri/{id}', [ClienteController::class, 'guardarSri'])->middleware(['jwt.auth', 'usuario.activo']);            // { sri: {...} } lo que devolvió el SRI
     Route::post('addFotoUbicacion', [ClienteController::class, 'addFotoUbicacion'])->middleware(['jwt.auth', 'usuario.activo']);      // { ClienteId, campo: mapa|casa, imagen_file }
 
     // Papelera de reciclaje (borrado lógico: deleteCliente manda a la papelera)
@@ -170,4 +198,39 @@ Route::group([
     Route::get('cobradores', [RecorridoController::class, 'cobradores']);       // ?desde&hasta
     Route::get('dias/{usuarioId}', [RecorridoController::class, 'dias']);       // ?desde&hasta
     Route::get('delDia/{usuarioId}', [RecorridoController::class, 'delDia']);   // ?fecha&radio_parada&minutos_parada&radio_cliente
+});
+
+// PROFORMAS
+// El primer documento del módulo: cabecera, líneas y ciclo de vida. Se guarda
+// entero de una vez —no hay rutas por línea— y el estado se cambia por su
+// propia ruta, que es la que conoce las transiciones permitidas.
+//
+// `condicionesCliente`, `clientePorIdentificacion`, `buscarProducto` y
+// `productos` son las ayudas que usa la pantalla mientras se arma el
+// documento: las dos primeras rellenan media cabecera al escoger el cliente
+// (por id o tecleando su cédula), y las otras dos contestan cuando se teclea
+// un código en la rejilla o se abre el listado. El prefijo cuelga de /ventas,
+// que ya está en config/cors.php, así que no hay que añadir nada allí.
+Route::group([
+    'prefix' => 'proforma', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allProformas', [ProformaController::class, 'allProformas']);                  // ?page&per_page&search&estado&filtros
+    Route::get('resumenProformas', [ProformaController::class, 'resumenProformas']);
+    Route::get('findByIdProforma/{id}', [ProformaController::class, 'findByIdProforma']);
+    Route::get('condicionesCliente/{clienteId}', [ProformaController::class, 'condicionesCliente']);
+    Route::get('clientePorIdentificacion/{identificacion}', [ProformaController::class, 'clientePorIdentificacion']);
+    Route::get('buscarProducto', [ProformaController::class, 'buscarProducto']);              // ?texto&limite
+    Route::get('productos', [ProformaController::class, 'productos']);                        // ?page&per_page&search&categoria_id&marca_id
+    Route::post('addProforma', [ProformaController::class, 'addProforma']);                   // { cliente_id, ..., detalle:[..] }
+    Route::post('editProforma/{id}', [ProformaController::class, 'editProforma']);
+    Route::post('estadoProforma/{id}', [ProformaController::class, 'estadoProforma']);        // { estado, motivo? }
+    Route::post('renovarProforma/{id}', [ProformaController::class, 'renovarProforma']);      // { validez_dias? }
+    Route::post('duplicarProforma/{id}', [ProformaController::class, 'duplicarProforma']);
+    Route::delete('deleteProforma/{id}', [ProformaController::class, 'deleteProforma']);
+
+    // Papelera de reciclaje
+    Route::get('papelera', [ProformaController::class, 'papelera']);
+    Route::post('restaurarProformas', [ProformaController::class, 'restaurarProformas']);     // { ids:[..] }
+    Route::post('eliminarDefinitivo', [ProformaController::class, 'eliminarDefinitivo']);     // { ids:[..] }  (permiso «vaciar»)
+    Route::post('vaciarPapelera', [ProformaController::class, 'vaciarPapelera']);             // (permiso «vaciar»)
 });

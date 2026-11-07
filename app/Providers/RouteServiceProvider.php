@@ -30,7 +30,7 @@ class RouteServiceProvider extends ServiceProvider
         // });
 
         //lpaa -> codigo que controla 10000 solicitudos por minuto y por usuario
-        foreach (['api', 'auth', 'config', 'rh', 'ventas', 'inventarios'] as $key) {
+        foreach (['api', 'auth', 'config', 'rh', 'ventas', 'inventarios', 'contabilidad', 'core', 'reportes', 'ecommerce'] as $key) {
             RateLimiter::for($key, function (Request $request) {
                 return Limit::perMinute(10000)->by($request->user()?->id ?: $request->ip());
             });
@@ -115,10 +115,36 @@ class RouteServiceProvider extends ServiceProvider
                 ->namespace($this->namespace)
                 ->group(base_path('routes/ventas.php'));
 
+            // La estructura de la empresa (sucursales, puntos de venta): no
+            // es de ventas, de ella cuelgan también rh e inventarios
+            Route::prefix('core')
+                ->middleware('core')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/core.php'));
+
             Route::prefix('inventarios')
                 ->middleware('inventarios')
                 ->namespace($this->namespace)
                 ->group(base_path('routes/inventarios.php'));
+
+            Route::prefix('contabilidad')
+                ->middleware('contabilidad')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/contabilidad.php'));
+
+            // La página web: lo de /ecommerce/publico lo pide la TIENDA sin
+            // token, así que este grupo no lleva autenticación; la pone cada
+            // ruta de administración dentro del fichero.
+            Route::prefix('ecommerce')
+                ->middleware('ecommerce')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/ecommerce.php'));
+
+            // Los tableros de reportería: leen y no escriben nada
+            Route::prefix('reportes')
+                ->middleware('reportes')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/reportes.php'));
 
 
             Route::middleware('web')

@@ -120,11 +120,18 @@ class ProductoController extends Controller
 
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
 
-    /** Los veintiún datos de la ficha, con sus castes, en el orden de las funciones. */
+    /** Los veinte datos de la ficha, con sus castes, en el orden de las funciones. */
     private const CASTS_DATOS = '
         ?::VARCHAR,   -- p_codigo
         ?::VARCHAR,   -- p_nombre
         ?::VARCHAR,   -- p_codigo_barras
+        -- Los tres códigos alternos: la referencia con la que cada proveedor
+        -- llama a este mismo producto. Van aquí, pegados a los otros códigos,
+        -- y este orden es el de las funciones: si se mueve uno hay que mover
+        -- también el de parametros().
+        ?::VARCHAR,   -- p_codigo2
+        ?::VARCHAR,   -- p_codigo3
+        ?::VARCHAR,   -- p_codigo4
         ?::TEXT,      -- p_descripcion
         ?::BIGINT,    -- p_marca_id
         ?::BIGINT,    -- p_categoria_id
@@ -138,10 +145,6 @@ class ProductoController extends Controller
         ?::NUMERIC,   -- p_stock_maximo
         ?::BOOLEAN,   -- p_maneja_serie
         ?::INTEGER,   -- p_garantia_meses
-        ?::NUMERIC,   -- p_peso_kg
-        ?::NUMERIC,   -- p_alto_cm
-        ?::NUMERIC,   -- p_ancho_cm
-        ?::NUMERIC,   -- p_profundidad_cm
         ?::BOOLEAN,   -- p_activo
     ';
 
@@ -173,6 +176,11 @@ class ProductoController extends Controller
             'codigo'         => 'required|string|min:2|max:30',
             'nombre'         => 'required|string|min:3|max:150',
             'codigo_barras'  => 'nullable|string|max:50',
+            // Los del proveedor. Sin unicidad a propósito: dos proveedores
+            // distintos pueden usar la misma referencia para cosas distintas.
+            'codigo2'        => 'nullable|string|max:50',
+            'codigo3'        => 'nullable|string|max:50',
+            'codigo4'        => 'nullable|string|max:50',
             // HTML desde el editor: las etiquetas ocupan, y la columna es
             // `text` sin límite propio
             'descripcion'    => 'nullable|string|max:20000',
@@ -189,10 +197,6 @@ class ProductoController extends Controller
             'stock_maximo'   => 'nullable|numeric|min:0',
             'maneja_serie'   => 'nullable|boolean',
             'garantia_meses' => 'nullable|integer|min:0|max:600',
-            'peso_kg'        => 'nullable|numeric|min:0',
-            'alto_cm'        => 'nullable|numeric|min:0',
-            'ancho_cm'       => 'nullable|numeric|min:0',
-            'profundidad_cm' => 'nullable|numeric|min:0',
             'activo'         => 'nullable|boolean',
             // Lo que se rellenó de la plantilla de la categoría:
             //   [{ caracteristica_id, nombre, valor, orden }, …]
@@ -253,6 +257,9 @@ class ProductoController extends Controller
             $d['codigo'],
             $d['nombre'],
             $this->num($d['codigo_barras'] ?? null),
+            $this->num($d['codigo2'] ?? null),
+            $this->num($d['codigo3'] ?? null),
+            $this->num($d['codigo4'] ?? null),
             $this->num($d['descripcion'] ?? null),
             $this->num($d['marca_id'] ?? null),
             $this->num($d['categoria_id'] ?? null),
@@ -266,10 +273,6 @@ class ProductoController extends Controller
             $this->num($d['stock_maximo'] ?? null),
             array_key_exists('maneja_serie', $d) ? (bool) $d['maneja_serie'] : false,
             $this->num($d['garantia_meses'] ?? null) ?? 0,
-            $this->num($d['peso_kg'] ?? null),
-            $this->num($d['alto_cm'] ?? null),
-            $this->num($d['ancho_cm'] ?? null),
-            $this->num($d['profundidad_cm'] ?? null),
             array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
         ];
     }
@@ -289,8 +292,28 @@ class ProductoController extends Controller
     public function allProductos(Request $request)
     {
         try {
-            $marca     = $request->input('marca_id');
-            $categoria = $request->input('categoria_id');
+            // Varias marcas a la vez: llegan como «3,7,11». Se limpia a
+            // conciencia porque esto acaba en un literal de array de
+            // PostgreSQL: sólo enteros positivos, sin repetidos.
+            $marcas = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('marca_ids', ''))),
+                fn ($id) => $id > 0
+            )));
+            // Las categorías, igual: llegan como «12,48». El árbol de la
+            // izquierda mete UNA y el panel de la derecha deja elegir varias;
+            // es el mismo filtro con dos mandos.
+            $categorias = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('categoria_ids', ''))),
+                fn ($id) => $id > 0
+            )));
+
+            // Los rangos. Abiertos por los dos lados: null en un extremo es
+            // «sin tope por ahí». Lo que no sea un número se ignora.
+            $num = fn ($v) => (is_numeric($v) ? (float) $v : null);
+            $precioMin = $num($request->input('precio_min'));
+            $precioMax = $num($request->input('precio_max'));
+            $costoMin  = $num($request->input('costo_min'));
+            $costoMax  = $num($request->input('costo_max'));
 
             // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
             // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
@@ -298,13 +321,16 @@ class ProductoController extends Controller
             $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT, ?::BIGINT, ?::JSONB) as result',
+                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT[], ?::BIGINT[], ?::JSONB, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
                  (string) $request->input('search', ''),
-                 ($marca === null || $marca === '') ? null : (int) $marca,
-                 ($categoria === null || $categoria === '') ? null : (int) $categoria,
-                 json_encode((object) $filtros)]
+                 // Sin marcas se manda NULL, no «{}»: los dos significan
+                 // «todas» para la función, pero NULL se lee mejor en el log.
+                 $marcas ? '{' . implode(',', $marcas) . '}' : null,
+                 $categorias ? '{' . implode(',', $categorias) . '}' : null,
+                 json_encode((object) $filtros),
+                 $precioMin, $precioMax, $costoMin, $costoMax]
             );
             $r = json_decode($result->result, true);
 

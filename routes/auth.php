@@ -157,6 +157,8 @@ Route::group([
     Route::get('/allHorarios', [HorarioController::class, 'allHorarios']);
     Route::get('/listHorarios', [HorarioController::class, 'listHorarios']);
     Route::get('/getHorario/{id}', [HorarioController::class, 'getHorario']);
+    // Probar el horario contra una fecha y hora: ¿se podría entrar?
+    Route::get('/puedeEntrar/{id}', [HorarioController::class, 'puedeEntrar']);   // ?fecha_hora=
     Route::post('/addHorario', [HorarioController::class, 'addHorario']);
     Route::post('/editHorario/{id}', [HorarioController::class, 'editHorario']);
     Route::post('/activarHorario/{id}', [HorarioController::class, 'activarHorario']);   // { activo? }; sin ella, alterna

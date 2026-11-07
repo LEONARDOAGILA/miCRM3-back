@@ -35,7 +35,7 @@ class Kernel extends HttpKernel
             \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
             \Illuminate\Session\Middleware\StartSession::class,
             \Illuminate\View\Middleware\ShareErrorsFromSession::class,
-            \App\Http\Middleware\VerifyCsrfToken::class,
+            \App\Http\Middleware\PreventRequestForgery::class,
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 
@@ -65,8 +65,32 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 
+        // La estructura de la empresa: sucursales y puntos de venta
+        'core' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':core',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
         'inventarios' => [
             \Illuminate\Routing\Middleware\ThrottleRequests::class.':inventarios',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
+        'contabilidad' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':contabilidad',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
+        // La página web. Sin autenticación en el grupo: la mitad de sus rutas
+        // las pide la TIENDA sin token (un visitante con su navegador). Las de
+        // administración llevan jwt.auth ruta a ruta, dentro del fichero.
+        'ecommerce' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':ecommerce',
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ],
+
+        'reportes' => [
+            \Illuminate\Routing\Middleware\ThrottleRequests::class.':reportes',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
 

@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\inventarios\CaracteristicaController;
+use App\Http\Controllers\inventarios\CaracteristicaNombreController;
 use App\Http\Controllers\inventarios\CategoriaController;
 use App\Http\Controllers\inventarios\MarcaController;
 use App\Http\Controllers\inventarios\ProductoController;
@@ -75,6 +76,7 @@ Route::group([
     Route::post('addCaracteristica',          [CaracteristicaController::class, 'addCaracteristica']);
     Route::post('editCaracteristica/{id}',    [CaracteristicaController::class, 'editCaracteristica']);
     Route::post('activarCaracteristica/{id}', [CaracteristicaController::class, 'activarCaracteristica']); // { activo? }; sin ella, alterna
+    Route::post('requeridoCaracteristica/{id}', [CaracteristicaController::class, 'requeridoCaracteristica']); // { requerido? }; sin ella, alterna
     Route::post('ordenarCaracteristicas',     [CaracteristicaController::class, 'ordenarCaracteristicas']); // { ids: [...] } en el orden nuevo
     Route::delete('deleteCaracteristica/{id}',[CaracteristicaController::class, 'deleteCaracteristica']);  // a la papelera
 
@@ -83,6 +85,27 @@ Route::group([
     Route::post('restaurar',          [CaracteristicaController::class, 'restaurar']);           // { ids: [...] }
     Route::post('eliminarDefinitivo', [CaracteristicaController::class, 'eliminarDefinitivo']);  // { ids: [...] }
     Route::delete('vaciarPapelera',   [CaracteristicaController::class, 'vaciarPapelera']);
+});
+
+// NOMBRES DE CARACTERÍSTICA (el diccionario del que se escoge; pantalla de
+// sistemas). `listCaracteristicasNombres` es lo que rellena el combo de
+// saveCaracteristica y de la ficha del producto.
+Route::group([
+    'prefix' => 'caracteristicaNombre', 'middleware' => ['jwt.auth', 'usuario.activo']
+], function () {
+    Route::get('allCaracteristicasNombres',  [CaracteristicaNombreController::class, 'allCaracteristicasNombres']);  // ?page&per_page&search&filtros
+    Route::get('listCaracteristicasNombres', [CaracteristicaNombreController::class, 'listCaracteristicasNombres']); // el combo: ?activos=1
+    Route::get('findByIdCaracteristicaNombre/{id}', [CaracteristicaNombreController::class, 'findByIdCaracteristicaNombre']);
+    Route::post('addCaracteristicaNombre',          [CaracteristicaNombreController::class, 'addCaracteristicaNombre']);
+    Route::post('editCaracteristicaNombre/{id}',    [CaracteristicaNombreController::class, 'editCaracteristicaNombre']);
+    Route::post('activarCaracteristicaNombre/{id}', [CaracteristicaNombreController::class, 'activarCaracteristicaNombre']); // { activo? }; sin ella, alterna
+    Route::delete('deleteCaracteristicaNombre/{id}',[CaracteristicaNombreController::class, 'deleteCaracteristicaNombre']);  // a la papelera
+
+    // Papelera de reciclaje
+    Route::get('papelera', [CaracteristicaNombreController::class, 'papelera']);
+    Route::post('restaurar',          [CaracteristicaNombreController::class, 'restaurar']);           // { ids: [...] }
+    Route::post('eliminarDefinitivo', [CaracteristicaNombreController::class, 'eliminarDefinitivo']);  // { ids: [...] }
+    Route::delete('vaciarPapelera',   [CaracteristicaNombreController::class, 'vaciarPapelera']);
 });
 
 // PRODUCTOS

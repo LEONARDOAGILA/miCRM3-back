@@ -1,0 +1,50 @@
+-- El menú y los accesos de la pantalla nueva. Sin esto la ruta cae en el 404
+-- aunque el componente esté bien: el AccessResolver busca el programa.
+--
+-- Se cuelga de «Inventarios» detrás de Características, y se copian los
+-- accesos TAL CUAL los tiene Características: quien administra la plantilla de
+-- cada categoría administra el diccionario de donde salen los nombres.
+-- `vaciar` se queda como esté allí.
+\set ON_ERROR_STOP on
+\pset tuples_only on
+\pset format unaligned
+
+BEGIN;
+
+INSERT INTO seguridad.menus (padre_id, orden, nivel, nombre, url, descripcion, icono)
+SELECT m.padre_id,
+       (SELECT COALESCE(MAX(orden), 0) + 1 FROM seguridad.menus WHERE padre_id = m.padre_id),
+       m.nivel,
+       '🔤 Nombres de característica',
+       'inventarios/allCaracteristicasNombres',
+       'El diccionario del que se escogen: nombre, unidad y tipo de dato',
+       m.icono
+  FROM seguridad.menus m
+ WHERE m.url = 'inventarios/allCaracteristicas'
+   AND NOT EXISTS (SELECT 1 FROM seguridad.menus WHERE url = 'inventarios/allCaracteristicasNombres');
+
+-- Los mismos accesos que Características, para los mismos perfiles
+INSERT INTO seguridad.accesos (perfil_id, menu_id, ver, crear, editar, eliminar, listar,
+                               reporte, auditar, ejecutar, papelera, vaciar)
+SELECT a.perfil_id,
+       (SELECT id FROM seguridad.menus WHERE url = 'inventarios/allCaracteristicasNombres'),
+       a.ver, a.crear, a.editar, a.eliminar, a.listar,
+       a.reporte, a.auditar, a.ejecutar, a.papelera, a.vaciar
+  FROM seguridad.accesos a
+ WHERE a.menu_id = (SELECT id FROM seguridad.menus WHERE url = 'inventarios/allCaracteristicas')
+   AND NOT EXISTS (
+       SELECT 1 FROM seguridad.accesos x
+        WHERE x.perfil_id = a.perfil_id
+          AND x.menu_id = (SELECT id FROM seguridad.menus WHERE url = 'inventarios/allCaracteristicasNombres'));
+
+SELECT 'menú creado: id ' || id || ' · ' || nombre || ' · ' || url || ' · orden ' || orden
+  FROM seguridad.menus WHERE url = 'inventarios/allCaracteristicasNombres';
+
+SELECT 'accesos: ' || string_agg(p.nombre || ' (ver=' || a.ver || ' crear=' || a.crear
+       || ' editar=' || a.editar || ' eliminar=' || a.eliminar || ' papelera=' || a.papelera
+       || ' vaciar=' || a.vaciar || ')', ', ')
+  FROM seguridad.accesos a
+  JOIN seguridad.perfiles p ON p.id = a.perfil_id
+ WHERE a.menu_id = (SELECT id FROM seguridad.menus WHERE url = 'inventarios/allCaracteristicasNombres');
+
+COMMIT;
