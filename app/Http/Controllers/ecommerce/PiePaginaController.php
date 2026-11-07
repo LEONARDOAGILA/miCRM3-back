@@ -42,6 +42,7 @@ class PiePaginaController extends Controller
 {
     use ApiResponder;
     use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\ImagenesDelEcommerce;
 
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,
@@ -103,7 +104,109 @@ class PiePaginaController extends Controller
         // Misma razon que en el encabezado: la tienda lee de cache.
         SeccionPublicaController::limpiar();
 
-        return $this->successResponse($r['data'] ?? null, $r['message'] ?? $porDefecto);
+        return $this->successResponse($this->conUrlDeImagen($r['data'] ?? null),
+                                      $r['message'] ?? $porDefecto);
+    }
+
+    /**
+     * La dirección de la imagen de cada columna.
+     *
+     * En la base va sólo el nombre del fichero; la pantalla necesita poder
+     * enseñarla. Se arma aquí y no en la base porque mover el CRM de máquina
+     * no puede dejar direcciones viejas guardadas.
+     */
+    private function conUrlDeImagen($data)
+    {
+        if (!is_array($data) || !isset($data['columnas']) || !is_array($data['columnas'])) {
+            return $data;
+        }
+
+        foreach ($data['columnas'] as &$columna) {
+            if (is_array($columna) && isset($columna['imagen']) && is_array($columna['imagen'])) {
+                $columna['imagen']['url'] = $this->urlImagenEcommerce($columna['imagen']['archivo'] ?? null);
+            }
+        }
+        unset($columna);
+
+        return $data;
+    }
+
+    // ================================================================
+    // LA IMAGEN DE UNA COLUMNA
+    // ================================================================
+    //
+    // VA POR SU PROPIA PUERTA, como la imagen de una sección del inicio:
+    // `editColumna` escribe todos los campos de la columna, así que meter
+    // aquí el fichero haría que renombrarla lo borrara.
+
+    public function imagenColumna(Request $request, $id)
+    {
+        return $this->ejecutar(function () use ($request, $id) {
+            if (!$request->hasFile('imagen')) {
+                return $this->errorResponse('Hace falta la imagen', 422);
+            }
+
+            [$nuevo, $error] = $this->guardarImagenEcommerce($request->file('imagen'));
+            if ($error !== null) {
+                return $this->errorResponse($error, 422);
+            }
+
+            try {
+                $result = DB::selectOne(
+                    'SELECT ecommerce.fn_pie_columna_imagen(?::BIGINT, ?::VARCHAR, '
+                    . self::CASTS_AUDIT . ') as result',
+                    array_merge([(int) $id, $nuevo], $this->auditoria($request))
+                );
+            } catch (QueryException $e) {
+                // La fila no llegó a guardarse: el fichero recién subido se
+                // quedaría en el disco sin que nada apunte a él
+                $this->borrarImagenEcommerce($nuevo);
+                throw $e;
+            }
+
+            return $this->responderImagen($result, $nuevo);
+        });
+    }
+
+    /** La quita de la columna y borra el fichero. */
+    public function quitarImagenColumna(Request $request, $id)
+    {
+        return $this->ejecutar(function () use ($request, $id) {
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_pie_columna_imagen(?::BIGINT, ?::VARCHAR, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, null], $this->auditoria($request))
+            );
+
+            return $this->responderImagen($result, null);
+        });
+    }
+
+    /**
+     * Contesta y borra del disco la imagen que acaba de dejar de usarse.
+     *
+     * SÓLO SE MIRA `pie_columnas`: estos ficheros se suben por esta puerta y
+     * por ninguna otra, y el nombre lo pone el servidor al azar, así que no
+     * puede coincidir con uno de otra parte.
+     */
+    private function responderImagen($result, ?string $nuevo)
+    {
+        $r = json_decode($result->result, true);
+        $anterior = $r['data']['anterior'] ?? null;
+
+        if ($anterior && $anterior !== $nuevo) {
+            $enUso = DB::selectOne(
+                'SELECT count(*) as n FROM ecommerce.pie_columnas WHERE imagen = ?', [$anterior]
+            );
+            if ((int) ($enUso->n ?? 0) === 0) {
+                $this->borrarImagenEcommerce($anterior);
+            }
+        }
+
+        SeccionPublicaController::limpiar();
+
+        return $this->successResponse($this->conUrlDeImagen($r['data'] ?? null),
+                                      $r['message'] ?? 'Pie de página');
     }
 
     /** El try/catch es el mismo en todos: se escribe una vez. */
@@ -161,6 +264,13 @@ class PiePaginaController extends Controller
             $validator = Validator::make($this->datosDe($request), [
                 'titulo' => 'required|string|max:60',
                 'activo' => 'nullable|boolean',
+                // La imagen que puede llevar la columna en vez de sus enlaces.
+                // El FICHERO no está aquí: va por imagenColumna(), porque esta
+                // puerta escribe todos sus campos y renombrar la columna lo
+                // borraría.
+                'imagen_alt'           => 'nullable|string|max:120',
+                'imagen_enlace'        => 'nullable|string|max:250',
+                'imagen_nueva_pestana' => 'nullable|boolean',
             ], [
                 'titulo.required' => 'El título de la columna es obligatorio',
                 'titulo.max'      => 'El título no puede superar los 60 caracteres',
@@ -172,9 +282,15 @@ class PiePaginaController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_pie_columnas_guardar(?::BIGINT, ?::VARCHAR, ?::BOOLEAN, '
-                . self::CASTS_AUDIT . ') as result',
-                array_merge([$id, $d['titulo'], array_key_exists('activo', $d) ? (bool) $d['activo'] : true],
-                            $this->auditoria($request))
+                . '?::VARCHAR, ?::VARCHAR, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([
+                    $id,
+                    $d['titulo'],
+                    array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                    $d['imagen_alt'] ?? null,
+                    $d['imagen_enlace'] ?? null,
+                    array_key_exists('imagen_nueva_pestana', $d) ? (bool) $d['imagen_nueva_pestana'] : null,
+                ], $this->auditoria($request))
             );
             return $this->responder($result);
         });

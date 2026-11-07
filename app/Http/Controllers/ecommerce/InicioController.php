@@ -230,6 +230,14 @@ class InicioController extends Controller
                 'disposicion'          => 'nullable|string|max:12',
                 // Cómo se enseña un banner: rotando o en carteles
                 'banner_vista'         => 'nullable|string|max:12',
+                // Cada cuántos segundos se mueve sola la sección: un banner
+                // cambia de imagen y una de productos pasa de tarjeta. El rango
+                // lo vuelve a mirar la base (fn_validar_entero): aquí es sólo
+                // para que un número absurdo no llegue a la consulta
+                'segundos'             => 'nullable|integer|min:2|max:60',
+                // En qué forma se pintan las fichas de la sección (hoy sólo
+                // las categorías destacadas): círculo o cuadrado
+                'forma'                => 'nullable|string|max:10',
                 'imagen_alt'           => 'nullable|string|max:120',
                 'imagen_enlace'        => 'nullable|string|max:250',
                 'imagen_nueva_pestana' => 'nullable|boolean',

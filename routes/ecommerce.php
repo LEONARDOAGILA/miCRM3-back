@@ -284,6 +284,11 @@ Route::group([
     Route::post('editColumna/{id}',     [PiePaginaController::class, 'editColumna'])->whereNumber('id');
     Route::delete('deleteColumna/{id}', [PiePaginaController::class, 'deleteColumna'])->whereNumber('id'); // se lleva sus enlaces
 
+    // El FICHERO de la imagen de una columna va aparte: editColumna escribe
+    // todos sus campos, así que renombrarla la borraría
+    Route::post('imagenColumna/{id}',   [PiePaginaController::class, 'imagenColumna'])->whereNumber('id');   // multipart: imagen
+    Route::delete('imagenColumna/{id}', [PiePaginaController::class, 'quitarImagenColumna'])->whereNumber('id');
+
     Route::post('addEnlace',           [PiePaginaController::class, 'addEnlace']);
     Route::post('editEnlace/{id}',     [PiePaginaController::class, 'editEnlace'])->whereNumber('id');
     Route::delete('deleteEnlace/{id}', [PiePaginaController::class, 'deleteEnlace'])->whereNumber('id');
