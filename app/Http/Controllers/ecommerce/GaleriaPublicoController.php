@@ -15,7 +15,7 @@ use App\Http\Resources\ApiResponder;
  *   GET ecommerce/publico/galerias/{clave}
  *
  * Una galería es un SITIO del diseño con su clave fija —`inicio_banner`,
- * `pagos_tarjetas`, `espana_motos_tarjetas`— y lo que devuelve son las
+ * `pagos_tarjetas`, `beneficios_fotos`— y lo que devuelve son las
  * imágenes que toca enseñar ahí AHORA: sin las apagadas y sin las que estén
  * fuera de su vigencia.
  *

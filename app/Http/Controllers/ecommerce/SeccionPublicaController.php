@@ -52,21 +52,29 @@ class SeccionPublicaController extends Controller
                 // La base guarda el nombre del fichero de la imagen de cada
                 // columna del pie; la dirección se arma aquí, como en el resto
                 // del ecommerce. Se hace DENTRO de la caché para no rehacerlo
-                // en cada petición
+                // en cada petición.
+                //
+                // LAS DOS FRANJAS. Desde el 08/11/2026 el pie tiene columnas
+                // arriba (`grupos`) y en la franja de abajo (`grupos_abajo`),
+                // y las de abajo también pueden llevar imagen. Recorrer sólo
+                // la primera las dejaba sin `url`: la tienda no pinta una
+                // imagen sin dirección, así que la columna salía vacía.
                 foreach ($datos as &$seccion) {
-                    // `$seccion['grupos'] ?? []` dentro del foreach NO vale: el `??`
-                    // devuelve una copia y la referencia escribiría en ella, no en
-                    // los datos. Se mira antes y se recorre el array de verdad
-                    if (!isset($seccion['grupos']) || !is_array($seccion['grupos'])) {
-                        continue;
-                    }
-                    foreach ($seccion['grupos'] as &$grupo) {
-                        if (is_array($grupo['imagen'] ?? null)) {
-                            $grupo['imagen']['url'] = $this->urlImagenEcommerce($grupo['imagen']['archivo'] ?? null);
-                            unset($grupo['imagen']['archivo']);
+                    foreach (['grupos', 'grupos_abajo'] as $franja) {
+                        // `$seccion[$franja] ?? []` dentro del foreach NO vale: el `??`
+                        // devuelve una copia y la referencia escribiría en ella, no en
+                        // los datos. Se mira antes y se recorre el array de verdad
+                        if (!isset($seccion[$franja]) || !is_array($seccion[$franja])) {
+                            continue;
                         }
+                        foreach ($seccion[$franja] as &$grupo) {
+                            if (is_array($grupo['imagen'] ?? null)) {
+                                $grupo['imagen']['url'] = $this->urlImagenEcommerce($grupo['imagen']['archivo'] ?? null);
+                                unset($grupo['imagen']['archivo']);
+                            }
+                        }
+                        unset($grupo);
                     }
-                    unset($grupo);
                 }
                 unset($seccion);
 

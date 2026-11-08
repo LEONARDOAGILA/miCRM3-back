@@ -19,14 +19,19 @@ use App\Http\Resources\ApiResponder;
  * tocar código ni volver a publicar la tienda, porque las escribe quien las
  * escribe —legal, no sistemas— y porque llevan fecha.
  *
- * DOS CLASES DE PÁGINA:
+ * TODAS LAS PÁGINAS SON IGUALES (desde el 07/11/2026). Antes había una
+ * bandera `fija` que la pantalla no podía cambiar y que, en las cuatro que
+ * tienen dirección propia en la tienda (/politicas-de-garantia, /conocenos…),
+ * impedía borrarlas, impedía moverlas y las dejaba fuera de /documentos. Se
+ * quitó: se editan, se mueven, se borran y salen todas en /documentos.
  *
- *   · Las FIJAS tienen una dirección propia en la tienda (/politicas-de-garantia,
- *     /conocenos). No se borran ni se meten en carpeta: si se borrase, esa
- *     dirección quedaría en un error que desde aquí no se entendería. Se
- *     ocultan.
- *   · Las demás viven en una CARPETA y salen listadas juntas en /documentos
- *     de la tienda.
+ * LO QUE ESO CUESTA, Y SE ACEPTÓ: esas cuatro quedan en dos direcciones —la
+ * suya, completa, y la genérica de sólo texto a la que lleva la lista— y
+ * borrar una deja su dirección del menú en la pantalla de error.
+ *
+ * NO HAY CARPETAS (se quitaron el 07/11/2026). Esto es un CRUD de páginas:
+ * una tabla, una ficha y una papelera. Agrupar diez páginas costaba un árbol
+ * en la pantalla, una papelera de dos niveles y ocho funciones en la base.
  *
  * LA CLAVE ES LA DIRECCIÓN. La tienda pide `publico/paginas/{clave}`, y el
  * menú del encabezado guarda esa misma clave en sus enlaces. Por eso se fija
@@ -51,12 +56,8 @@ use App\Http\Resources\ApiResponder;
  *   POST   ecommerce/paginaInformativa/restaurar                       { ids: [...] }
  *   DELETE ecommerce/paginaInformativa/vaciarPapelera                  (permiso «vaciar»)
  *
- *   GET    ecommerce/paginaInformativa/grupos
- *   POST   ecommerce/paginaInformativa/addGrupo
- *   POST   ecommerce/paginaInformativa/editGrupo/{id}
- *   POST   ecommerce/paginaInformativa/ordenarGrupos                   { ids: [...] }
- *   POST   ecommerce/paginaInformativa/restaurarGrupo/{id}
- *   DELETE ecommerce/paginaInformativa/deleteGrupo/{id}                se lleva sus páginas
+ *   POST   ecommerce/paginaInformativa/addImagenPaginaInformativa      { imagen_file }
+ *   POST   ecommerce/paginaInformativa/addPdfPaginaInformativa         { pdf_file }
  */
 class PaginaInformativaController extends Controller
 {
@@ -73,9 +74,7 @@ class PaginaInformativaController extends Controller
         'P0006' => 409,   // esa clave o ese nombre ya existen
         'P0013' => 404,   // no existe
         'P0015' => 422,   // valor inválido
-        'P0016' => 422,   // la carpeta indicada no existe
         'P0019' => 404,   // no está en la papelera
-        'P0021' => 409,   // es fija: no se borra
     ];
 
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
@@ -119,6 +118,21 @@ class PaginaInformativaController extends Controller
         ];
     }
 
+    /**
+     * El encabezado y el pie de la tienda, a rehacerse.
+     *
+     * SE LLAMA EN TODO LO QUE CAMBIA UNA PÁGINA, porque sus enlaces dependen
+     * de ella: un enlace del pie o del menú que lleva a una página apagada,
+     * borrada o restaurada deja de salir (o vuelve a salir) en la tienda, y
+     * eso lo decide ecommerce.fn_secciones_publicas al pintar. Sin esta
+     * llamada el cambio tardaría hasta diez minutos en notarse, que es lo que
+     * dura la caché de las secciones.
+     */
+    private function refrescarSeccionesDeLaTienda(): void
+    {
+        SeccionPublicaController::limpiar();
+    }
+
     /** JSON plano, o el envoltorio { json: "…" } de los formularios FormData. */
     private function datosDe(Request $request): array
     {
@@ -134,13 +148,15 @@ class PaginaInformativaController extends Controller
         return [
             'clave'                   => 'nullable|string|max:50|regex:/^[a-z0-9_-]+$/',
             'titulo'                  => 'required|string|min:2|max:120',
-            'grupo_id'                => 'nullable|integer',
             'activo'                  => 'nullable|boolean',
             'contenido'               => 'required|array',
             'contenido.texto'         => 'required|string',
             'contenido.imagen'        => 'nullable|string|max:500',
             'contenido.imagen_alt'    => 'nullable|string|max:150',
+            'contenido.imagen_lado'   => 'nullable|string|in:izquierda,derecha',
             'contenido.pdf'           => 'nullable|string|max:500',
+            'contenido.pdf_nombre'    => 'nullable|string|max:150',
+            'contenido.pdf_texto'     => 'nullable|string|max:150',
             'contenido.desplegables'  => 'nullable|array|max:6',
         ];
     }
@@ -183,7 +199,17 @@ class PaginaInformativaController extends Controller
             'texto'      => $this->htmlParaGuardar($c['texto'] ?? ''),
             'imagen'     => $this->nombreDeArchivo($c['imagen'] ?? null),
             'imagen_alt' => $c['imagen_alt'] ?? null,
+            // De qué lado se pinta la imagen en la tienda. Va aquí y no en una
+            // columna porque es de la imagen, y la imagen vive en el contenido.
+            'imagen_lado' => $c['imagen_lado'] ?? null,
             'pdf'        => $this->nombreDeArchivo($c['pdf'] ?? null),
+            // Cómo se llamaba el fichero que subieron. El del disco lleva la
+            // fecha y unos caracteres al azar, y eso no se le puede enseñar a
+            // nadie: ni al que administra ni al visitante que lo descarga.
+            'pdf_nombre' => $c['pdf_nombre'] ?? null,
+            // Lo que se lee al lado del icono en la tienda. Vacío, la tienda
+            // saca el botón «Descargar PDF» de siempre.
+            'pdf_texto'  => $c['pdf_texto'] ?? null,
             'desplegables' => [],
         ];
 
@@ -217,25 +243,26 @@ class PaginaInformativaController extends Controller
     // ================================================================
 
     /**
-     * Todo lo que necesita la pantalla de un tirón: las páginas y las carpetas.
+     * La lista, sin el contenido de cada página.
      *
-     * Van juntas y no en dos llamadas porque la pantalla no sirve de nada con
-     * la mitad: las páginas se pintan DENTRO de su carpeta, y pedirlas aparte
-     * sólo añade un estado intermedio en el que la lista está a medias.
+     * SIN PAGINAR: son diez páginas y no van a ser mil. La rejilla las filtra
+     * y las ordena en el navegador, que con esta cantidad va más rápido que
+     * pedirle al servidor una página de diez filas.
      */
     public function allPaginasInformativas(Request $request)
     {
         try {
-            $paginas = DB::selectOne('SELECT ecommerce.fn_paginas_informativas_listar() as result');
-            $grupos  = DB::selectOne('SELECT ecommerce.fn_paginas_informativas_grupos_listar() as result');
+            $result = DB::selectOne('SELECT ecommerce.fn_paginas_informativas_listar() as result');
+            $r = json_decode($result->result, true);
 
-            $p = json_decode($paginas->result, true);
-            $g = json_decode($grupos->result, true);
+            // De la lista sólo viene el NOMBRE de la imagen; la miniatura de
+            // la rejilla necesita la dirección entera
+            $filas = array_map(function ($p) {
+                $p['imagen'] = $this->urlArchivo($p['imagen'] ?? null, 'imagenes');
+                return $p;
+            }, $r['data'] ?? []);
 
-            return $this->successResponse([
-                'paginas' => $p['data'] ?? [],
-                'grupos'  => $g['data'] ?? [],
-            ], 'Páginas informativas');
+            return $this->successResponse($filas, $r['message'] ?? 'Páginas informativas');
 
         } catch (QueryException $e) {
             [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
@@ -291,20 +318,22 @@ class PaginaInformativaController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_paginas_informativas_crear(?::TEXT, ?::VARCHAR, ?::JSONB, ?::BIGINT, ?::BOOLEAN, '
+                'SELECT ecommerce.fn_paginas_informativas_crear(?::TEXT, ?::VARCHAR, ?::JSONB, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     // Sin clave la saca del título la propia función
                     isset($d['clave']) && $d['clave'] !== '' ? $d['clave'] : null,
                     $d['titulo'],
                     json_encode($this->contenidoParaGuardar($d['contenido'])),
-                    $d['grupo_id'] ?? null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
 
             sistemaLog('info', 'Página informativa creada', ['titulo' => $d['titulo']]);
+            // La tienda tiene que enterarse: sus enlaces dependen de esta página
+            $this->refrescarSeccionesDeLaTienda();
+
             return $this->successResponse($this->paginaParaLeer($r['data']), $r['message']);
 
         } catch (QueryException $e) {
@@ -328,19 +357,21 @@ class PaginaInformativaController extends Controller
             // La clave NO se manda: es la dirección de la página y se queda
             // como nació. Si llega una, se ignora sin decir nada.
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_paginas_informativas_modificar(?::BIGINT, ?::VARCHAR, ?::JSONB, ?::BIGINT, ?::BOOLEAN, '
+                'SELECT ecommerce.fn_paginas_informativas_modificar(?::BIGINT, ?::VARCHAR, ?::JSONB, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     (int) $id,
                     $d['titulo'],
                     json_encode($this->contenidoParaGuardar($d['contenido'])),
-                    $d['grupo_id'] ?? null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
 
             sistemaLog('info', 'Página informativa modificada', ['id' => $id]);
+            // La tienda tiene que enterarse: sus enlaces dependen de esta página
+            $this->refrescarSeccionesDeLaTienda();
+
             return $this->successResponse($this->paginaParaLeer($r['data']), $r['message']);
 
         } catch (QueryException $e) {
@@ -366,6 +397,9 @@ class PaginaInformativaController extends Controller
                 ], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
+
+            // La tienda tiene que enterarse: sus enlaces dependen de esta página
+            $this->refrescarSeccionesDeLaTienda();
 
             return $this->successResponse($this->paginaParaLeer($r['data']), $r['message']);
 
@@ -414,6 +448,9 @@ class PaginaInformativaController extends Controller
             $r = json_decode($result->result, true);
 
             sistemaLog('info', 'Página informativa a la papelera', ['id' => $id]);
+            // La tienda tiene que enterarse: sus enlaces dependen de esta página
+            $this->refrescarSeccionesDeLaTienda();
+
             return $this->successResponse($this->paginaParaLeer($r['data']), $r['message']);
 
         } catch (QueryException $e) {
@@ -429,7 +466,7 @@ class PaginaInformativaController extends Controller
     // PAPELERA
     // ================================================================
 
-    /** Un solo cesto: carpetas y páginas, que es como se ve en la pantalla. */
+    /** Un solo cesto: la papelera es una lista plana de páginas. */
     public function papelera()
     {
         try {
@@ -457,6 +494,9 @@ class PaginaInformativaController extends Controller
                 array_merge([json_encode(array_values(array_map('intval', $ids)))], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
+
+            // La tienda tiene que enterarse: sus enlaces dependen de esta página
+            $this->refrescarSeccionesDeLaTienda();
 
             return $this->successResponse($r['data'], $r['message']);
 
@@ -496,6 +536,9 @@ class PaginaInformativaController extends Controller
             }
 
             sistemaLog('info', 'Papelera de páginas informativas vaciada', $r['data'] ?? []);
+            // La tienda tiene que enterarse: sus enlaces dependen de esta página
+            $this->refrescarSeccionesDeLaTienda();
+
             return $this->successResponse($r['data'], $r['message']);
 
         } catch (QueryException $e) {
@@ -523,131 +566,155 @@ class PaginaInformativaController extends Controller
     }
 
     // ================================================================
-    // LAS CARPETAS
+    // LA IMAGEN DE LA PÁGINA
     // ================================================================
 
-    public function grupos()
+    /**
+     * Sube la imagen de una página.
+     *
+     * VA APARTE DE GUARDAR, como el logo de una marca: un fichero no viaja en
+     * un JSON, y partirlo en dos llamadas es más simple que mandar el
+     * formulario entero como FormData cada vez que se toca una coma del texto.
+     *
+     * AQUÍ NO SE GUARDA NADA EN LA BASE. Esto deja el fichero en disco y
+     * devuelve su nombre; quien decide si esa página lleva esa imagen es
+     * `editPaginaInformativa`, con el contenido completo. Así una imagen
+     * subida y luego descartada no cambia la página: se queda un fichero
+     * suelto, que es mucho menos malo que una página apuntando a algo que el
+     * usuario no llegó a confirmar.
+     *
+     * El nombre lleva la hora: la misma página puede cambiar de imagen y el
+     * navegador tiene que enterarse. Con un nombre fijo por página, el
+     * `<img>` seguiría enseñando la vieja hasta que alguien vacíe la caché.
+     */
+    public function addImagenPaginaInformativa(Request $request)
     {
         try {
-            $result = DB::selectOne('SELECT ecommerce.fn_paginas_informativas_grupos_listar() as result');
-            $r = json_decode($result->result, true);
-
-            return $this->successResponse($r['data'], $r['message']);
-
-        } catch (Exception $e) {
-            sistemaLog('error', 'Error en grupos de páginas informativas', ['message' => $e->getMessage()]);
-            return $this->errorResponse($e->getMessage(), 500);
-        }
-    }
-
-    public function addGrupo(Request $request)
-    {
-        return $this->guardarGrupo($request, null);
-    }
-
-    public function editGrupo(Request $request, $id)
-    {
-        return $this->guardarGrupo($request, (int) $id);
-    }
-
-    /** Crear y modificar una carpeta sólo se diferencian en el id. */
-    private function guardarGrupo(Request $request, ?int $id)
-    {
-        try {
-            $validator = Validator::make($this->datosDe($request),
-                ['nombre' => 'required|string|min:2|max:60'],
-                ['nombre.required' => 'El nombre de la carpeta es obligatorio',
-                 'nombre.min'      => 'El nombre debe tener al menos 2 caracteres',
-                 'nombre.max'      => 'El nombre no puede superar los 60 caracteres']);
+            $validator = Validator::make($request->all(), [
+                'imagen_file' => 'required|file|image|mimes:jpg,jpeg,png,webp|max:10240',
+            ], [
+                'imagen_file.required' => 'No se encontró la imagen para guardar',
+                'imagen_file.image'    => 'El archivo debe ser una imagen',
+                'imagen_file.mimes'    => 'La imagen debe ser jpg, png o webp',
+                'imagen_file.max'      => 'La imagen no puede superar los 10 MB',
+            ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
             }
-            $nombre = $validator->validated()['nombre'];
 
-            $sql = $id === null
-                ? 'SELECT ecommerce.fn_paginas_informativas_grupos_crear(?::VARCHAR, ' . self::CASTS_AUDIT . ') as result'
-                : 'SELECT ecommerce.fn_paginas_informativas_grupos_modificar(?::BIGINT, ?::VARCHAR, ' . self::CASTS_AUDIT . ') as result';
+            $file      = $request->file('imagen_file');
+            $extension = strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            // La base sólo admite estas cuatro (fn_paginas_informativas_contenido_validar)
+            if (!in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+                $extension = 'jpg';
+            }
+            $nombre = 'pagina_' . date('YmdHis') . '_' . bin2hex(random_bytes(3)) . '.' . $extension;
 
-            $argumentos = $id === null ? [$nombre] : [$id, $nombre];
-
-            $result = DB::selectOne($sql, array_merge($argumentos, $this->auditoria($request)));
-            $r = json_decode($result->result, true);
-
-            return $this->successResponse($r['data'], $r['message']);
-
-        } catch (QueryException $e) {
-            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
-            return $this->errorResponse($mensaje, $codigo);
-        } catch (Exception $e) {
-            sistemaLog('error', 'Error al guardar la carpeta de páginas', ['message' => $e->getMessage()]);
-            return $this->errorResponse($e->getMessage(), 500);
-        }
-    }
-
-    public function ordenarGrupos(Request $request)
-    {
-        try {
-            $ids = $this->datosDe($request)['ids'] ?? null;
-            if (!is_array($ids) || !$ids) {
-                return $this->errorResponse('No se indicó el orden nuevo', 422);
+            if (!$file->storeAs(ArchivoPublicoController::CARPETA, $nombre)) {
+                return $this->errorResponse('Error al guardar el archivo', 500);
             }
 
-            $result = DB::selectOne(
-                'SELECT ecommerce.fn_paginas_informativas_grupos_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([json_encode(array_values(array_map('intval', $ids)))], $this->auditoria($request))
-            );
-            $r = json_decode($result->result, true);
+            $ruta = storage_path('app/' . ArchivoPublicoController::CARPETA . '/' . $nombre);
+            if (!is_file($ruta) || filesize($ruta) === 0) {
+                return $this->errorResponse('El archivo no se guardó correctamente', 500);
+            }
 
-            return $this->successResponse($r['data'], $r['message']);
+            sistemaLog('info', 'Imagen de página informativa subida', ['imagen' => $nombre]);
 
-        } catch (QueryException $e) {
-            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
-            return $this->errorResponse($mensaje, $codigo);
+            return $this->successResponse([
+                'imagen'    => $nombre,
+                'full_path' => $this->urlArchivo($nombre, 'imagenes'),
+            ], 'Imagen subida');
+
         } catch (Exception $e) {
-            sistemaLog('error', 'Error en ordenarGrupos', ['message' => $e->getMessage()]);
+            sistemaLog('error', 'Error en addImagenPaginaInformativa', ['message' => $e->getMessage()]);
             return $this->errorResponse($e->getMessage(), 500);
         }
     }
 
-    /** Borrar una carpeta se lleva sus páginas; lo dice el mensaje. */
-    public function deleteGrupo(Request $request, $id)
+    // ================================================================
+    // EL PDF DE LA PÁGINA
+    // ================================================================
+
+    /**
+     * Sube el PDF de una página.
+     *
+     * LO MISMO QUE LA IMAGEN, y por los mismos motivos: deja el fichero en
+     * disco y devuelve su nombre, y quien decide si esa página lleva ese
+     * documento es el guardado, con el contenido entero.
+     *
+     * HASTA HOY EL PDF NO SE PODÍA TOCAR. Venía heredado del CRM viejo: el
+     * editor lo enseñaba y lo devolvía tal cual, sin poder cambiarlo ni
+     * quitarlo. Ahora se sube desde la ficha de la página.
+     *
+     * SE DEVUELVE TAMBIÉN `pdf_nombre`, que es cómo se llamaba el fichero que
+     * eligieron. El del disco lleva la fecha y seis caracteres al azar —dos
+     * páginas no pueden pisarse, y el navegador tiene que enterarse al
+     * cambiarlo—, así que es el nombre original el que se enseña y el que se
+     * descarga. Se limpia aquí: llega del navegador y acaba en una pantalla.
+     *
+     * 15 MB, no 20: el servidor acepta 20 (upload_max_filesize) y si el
+     * fichero llega justo en el límite PHP lo corta ANTES de que Laravel vea
+     * nada, y la respuesta sería un error raro en vez de «es muy grande».
+     */
+    public function addPdfPaginaInformativa(Request $request)
     {
         try {
-            $result = DB::selectOne(
-                'SELECT ecommerce.fn_paginas_informativas_grupos_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([(int) $id], $this->auditoria($request))
-            );
-            $r = json_decode($result->result, true);
+            $validator = Validator::make($request->all(), [
+                'pdf_file' => 'required|file|mimes:pdf|max:15360',
+            ], [
+                'pdf_file.required' => 'No se encontró el documento para guardar',
+                'pdf_file.mimes'    => 'El documento debe ser un PDF',
+                'pdf_file.max'      => 'El documento no puede superar los 15 MB',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
 
-            sistemaLog('info', 'Carpeta de páginas a la papelera', ['id' => $id]);
-            return $this->successResponse($r['data'], $r['message']);
+            $file   = $request->file('pdf_file');
+            $nombre = 'pagina_' . date('YmdHis') . '_' . bin2hex(random_bytes(3)) . '.pdf';
 
-        } catch (QueryException $e) {
-            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
-            return $this->errorResponse($mensaje, $codigo);
+            if (!$file->storeAs(ArchivoPublicoController::CARPETA, $nombre)) {
+                return $this->errorResponse('Error al guardar el archivo', 500);
+            }
+
+            $ruta = storage_path('app/' . ArchivoPublicoController::CARPETA . '/' . $nombre);
+            if (!is_file($ruta) || filesize($ruta) === 0) {
+                return $this->errorResponse('El archivo no se guardó correctamente', 500);
+            }
+
+            sistemaLog('info', 'PDF de página informativa subido', ['pdf' => $nombre]);
+
+            return $this->successResponse([
+                'pdf'        => $nombre,
+                'pdf_nombre' => $this->nombreVisibleDePdf($file->getClientOriginalName()),
+                'full_path'  => $this->urlArchivo($nombre, 'documentos'),
+            ], 'Documento subido');
+
         } catch (Exception $e) {
-            sistemaLog('error', 'Error en deleteGrupo', ['message' => $e->getMessage()]);
+            sistemaLog('error', 'Error en addPdfPaginaInformativa', ['message' => $e->getMessage()]);
             return $this->errorResponse($e->getMessage(), 500);
         }
     }
 
-    public function restaurarGrupo(Request $request, $id)
+    /**
+     * El nombre que eligió el usuario, en condiciones de enseñarse.
+     *
+     * Viene del navegador, así que no se confía: se queda sólo con el nombre
+     * (sin carpetas), se quitan los caracteres de control y los que podrían
+     * cerrar una etiqueta, y se recorta a lo que admite la base. Sin nombre
+     * utilizable, null: la pantalla ya sabe poner «Documento.pdf».
+     */
+    private function nombreVisibleDePdf(?string $original): ?string
     {
-        try {
-            $result = DB::selectOne(
-                'SELECT ecommerce.fn_paginas_informativas_grupos_restaurar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([(int) $id], $this->auditoria($request))
-            );
-            $r = json_decode($result->result, true);
+        $nombre = basename(trim((string) $original));
+        $nombre = preg_replace('/[\x00-\x1F\x7F<>"]+/u', '', $nombre);
+        $nombre = trim(preg_replace('/\s+/u', ' ', (string) $nombre));
 
-            return $this->successResponse($r['data'], $r['message']);
-
-        } catch (QueryException $e) {
-            [$mensaje, $codigo] = $this->traducirErrorPostgres($e);
-            return $this->errorResponse($mensaje, $codigo);
-        } catch (Exception $e) {
-            sistemaLog('error', 'Error en restaurarGrupo', ['message' => $e->getMessage()]);
-            return $this->errorResponse($e->getMessage(), 500);
+        if ($nombre === '' || $nombre === '.' || $nombre === '..') {
+            return null;
         }
+        // mb_substr y no substr: cortar por bytes parte una tilde por la mitad
+        return mb_substr($nombre, 0, 150);
     }
 }

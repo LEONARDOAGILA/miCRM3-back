@@ -15,7 +15,7 @@ use App\Http\Resources\ApiResponder;
  * LAS GALERÍAS DE LA TIENDA (administración).
  *
  * Una galería es un SITIO del diseño con su clave fija —`inicio_banner`,
- * `pagos_tarjetas`, `espana_motos_tarjetas`— y lo que se administra aquí son
+ * `pagos_tarjetas`, `beneficios_fotos`— y lo que se administra aquí son
  * las imágenes que van ahí: cuáles, en qué orden, a dónde llevan y entre qué
  * fechas se ven.
  *
@@ -135,7 +135,6 @@ class GaleriaController extends Controller
             GaleriaPublicoController::limpiar($clave);
         }
         InicioPublicoController::limpiar();
-        EspanaMotosPublicoController::limpiar();
 
         return $this->successResponse($this->conUrl($data), $r['message'] ?? 'Galería');
     }

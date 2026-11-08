@@ -6,8 +6,6 @@ use App\Http\Controllers\ecommerce\CategoriaWebController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\CuerpoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
-use App\Http\Controllers\ecommerce\EspanaMotosController;
-use App\Http\Controllers\ecommerce\EspanaMotosPublicoController;
 use App\Http\Controllers\ecommerce\GaleriaController;
 use App\Http\Controllers\ecommerce\GaleriaPublicoController;
 use App\Http\Controllers\ecommerce\ImagenController;
@@ -17,6 +15,7 @@ use App\Http\Controllers\ecommerce\MarcaWebController;
 use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
+use App\Http\Controllers\ecommerce\ProductoPublicoController;
 use App\Http\Controllers\ecommerce\ProductoSeccionController;
 use App\Http\Controllers\ecommerce\ResumenController;
 use App\Http\Controllers\ecommerce\SeccionPublicaController;
@@ -60,9 +59,6 @@ Route::group(['prefix' => 'publico'], function () {
     // /shop. Va anidado, no plano.
     Route::get('categorias-menu',  [CategoriaWebPublicoController::class, 'menu']);
 
-    // El micro-sitio de España Motos. Sin publicar devuelve 404.
-    Route::get('espana-motos',     [EspanaMotosPublicoController::class, 'pagina']);
-
     // La portada: la lista de secciones en su orden. Crece sola segun se
     // migran sus fuentes; la tienda ignora las claves que no conoce.
     Route::get('inicio',           [InicioPublicoController::class, 'inicio']);
@@ -76,6 +72,18 @@ Route::group(['prefix' => 'publico'], function () {
     // de «dónde pagar» del pie. La clave es el sitio del diseño.
     Route::get('galerias/{clave}', [GaleriaPublicoController::class, 'listar'])
          ->where('clave', '[a-z0-9_]+');
+
+    // EL CATÁLOGO: lo que pintan /shop, las páginas de marca y el micro-sitio
+    // de motos. Una página de fichas más las opciones del panel de filtros,
+    // con cuántos productos habría con cada una.
+    Route::get('productos',        [ProductoPublicoController::class, 'listar']);
+
+    // Y la ficha de uno (/product/:slug). Lo que no se puede ver da 404.
+    Route::get('productos/{id}',   [ProductoPublicoController::class, 'ficha'])->whereNumber('id');
+
+    // Y el desplegable del encabezado, mientras se escribe: la MISMA búsqueda,
+    // con unas pocas fichas y sus sugerencias.
+    Route::get('buscador',         [ProductoPublicoController::class, 'buscador']);
 
     // Páginas de texto
     Route::get('documentos',       [PaginaInformativaPublicoController::class, 'documentos']);
@@ -271,28 +279,6 @@ Route::group([
 });
 
 // ----------------------------------------------------------------------------
-// ESPAÑA MOTOS (administración)
-// ----------------------------------------------------------------------------
-// Las pestañas agrupan categorías del catálogo; las marcas salen de
-// inventarios.marcas. Se publica aparte, con su propia palanca.
-Route::group([
-    'prefix' => 'espanaMotos', 'middleware' => ['jwt.auth', 'usuario.activo']
-], function () {
-    Route::get('getEspanaMotos',   [EspanaMotosController::class, 'getEspanaMotos']);
-    Route::post('editEspanaMotos', [EspanaMotosController::class, 'editEspanaMotos']);
-
-    Route::post('addPestana',           [EspanaMotosController::class, 'addPestana']);          // { nombre, categorias: [...] }
-    Route::post('editPestana/{id}',     [EspanaMotosController::class, 'editPestana'])->whereNumber('id');
-    Route::delete('deletePestana/{id}', [EspanaMotosController::class, 'deletePestana'])->whereNumber('id');
-
-    Route::post('addMarca',           [EspanaMotosController::class, 'addMarca']);               // { marca_id }
-    Route::delete('deleteMarca/{id}', [EspanaMotosController::class, 'deleteMarca'])->whereNumber('id');
-
-    Route::post('ordenarPestanas', [EspanaMotosController::class, 'ordenarPestanas']);           // { ids: [...] }
-    Route::post('ordenarMarcas',   [EspanaMotosController::class, 'ordenarMarcas']);             // { ids: [...] }
-});
-
-// ----------------------------------------------------------------------------
 // ENCABEZADO (administración)
 // ----------------------------------------------------------------------------
 Route::group([
@@ -363,19 +349,15 @@ Route::group([
     Route::post('ordenarPaginasInformativas',    [PaginaInformativaController::class, 'ordenarPaginasInformativas']);                  // { ids: [...] }
     Route::delete('deletePaginaInformativa/{id}',[PaginaInformativaController::class, 'deletePaginaInformativa'])->whereNumber('id');   // a la papelera
 
-    // La papelera es UNA para páginas y carpetas: en la pantalla es un solo
-    // cesto con dos niveles.
     Route::get('papelera',          [PaginaInformativaController::class, 'papelera']);
     Route::post('restaurar',        [PaginaInformativaController::class, 'restaurar']);      // { ids: [...] }
     Route::delete('vaciarPapelera', [PaginaInformativaController::class, 'vaciarPapelera']); // permiso «vaciar»
 
-    // Carpetas
-    Route::get('grupos',             [PaginaInformativaController::class, 'grupos']);
-    Route::post('addGrupo',          [PaginaInformativaController::class, 'addGrupo']);
-    Route::post('editGrupo/{id}',    [PaginaInformativaController::class, 'editGrupo'])->whereNumber('id');
-    Route::post('ordenarGrupos',     [PaginaInformativaController::class, 'ordenarGrupos']);   // { ids: [...] }
-    Route::post('restaurarGrupo/{id}', [PaginaInformativaController::class, 'restaurarGrupo'])->whereNumber('id');
-    Route::delete('deleteGrupo/{id}',  [PaginaInformativaController::class, 'deleteGrupo'])->whereNumber('id'); // se lleva sus páginas
+    // La imagen y el PDF van por su cuenta: un fichero no viaja en un JSON, y
+    // qué página los lleva lo decide después el guardado con el contenido
+    // entero.
+    Route::post('addImagenPaginaInformativa', [PaginaInformativaController::class, 'addImagenPaginaInformativa']); // { imagen_file }
+    Route::post('addPdfPaginaInformativa',    [PaginaInformativaController::class, 'addPdfPaginaInformativa']);    // { pdf_file }
 });
 
 // ----------------------------------------------------------------------------

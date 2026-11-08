@@ -14,9 +14,15 @@ use App\Http\Resources\ApiResponder;
 /**
  * EL PIE DE LA TIENDA (ecommerce.pie + pie_columnas + pie_enlaces).
  *
- * La configuración —las redes sociales— es una sola fila. Lo que se administra
- * de verdad son las COLUMNAS: cada una con su título y sus enlaces, que es
- * como se ven abajo del todo en la tienda.
+ * La configuración —las redes sociales y la línea de los derechos reservados—
+ * es una sola fila. Lo que se administra de verdad son las COLUMNAS: cada una
+ * con su título y sus enlaces, que es como se ven abajo del todo en la tienda.
+ *
+ * DOS FRANJAS (desde el 08/11/2026). Una columna lleva su `zona`: «arriba»
+ * son las de siempre y «abajo» las de la franja de debajo, donde hasta ese
+ * día había dos galerías de medios de pago escritas en el código de la
+ * tienda. Es la misma tabla y la misma puerta: lo único que cambia es dónde
+ * salen.
  *
  * SE PARECE AL ENCABEZADO PERO NO ES LO MISMO: allí el segundo nivel es un
  * desplegable que se abre al pasar por encima, y un enlace principal puede no
@@ -29,7 +35,7 @@ use App\Http\Resources\ApiResponder;
  *
  *   GET    ecommerce/pie/getPie
  *   POST   ecommerce/pie/editPie                 { config }
- *   POST   ecommerce/pie/addColumna              { titulo, activo? }
+ *   POST   ecommerce/pie/addColumna              { titulo, activo?, zona? }
  *   POST   ecommerce/pie/editColumna/{id}
  *   DELETE ecommerce/pie/deleteColumna/{id}      se lleva sus enlaces
  *   POST   ecommerce/pie/addEnlace               { columna_id, texto, enlace, … }
@@ -271,9 +277,14 @@ class PiePaginaController extends Controller
                 'imagen_alt'           => 'nullable|string|max:120',
                 'imagen_enlace'        => 'nullable|string|max:250',
                 'imagen_nueva_pestana' => 'nullable|boolean',
+                // En qué franja del pie sale: las de siempre («arriba») o la de
+                // debajo, encima de los derechos reservados. Si no viene, la base
+                // la deja donde estaba (y una columna nueva, arriba).
+                'zona' => 'nullable|string|in:arriba,abajo',
             ], [
                 'titulo.required' => 'El título de la columna es obligatorio',
                 'titulo.max'      => 'El título no puede superar los 60 caracteres',
+                'zona.in'         => 'La columna sólo puede ir arriba o abajo',
             ]);
             if ($validator->fails()) {
                 return $this->errorResponse($validator->errors()->first(), 422);
@@ -282,7 +293,7 @@ class PiePaginaController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_pie_columnas_guardar(?::BIGINT, ?::VARCHAR, ?::BOOLEAN, '
-                . '?::VARCHAR, ?::VARCHAR, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::VARCHAR, ?::BOOLEAN, ' . self::CASTS_AUDIT . ', ?::TEXT) as result',
                 array_merge([
                     $id,
                     $d['titulo'],
@@ -290,7 +301,7 @@ class PiePaginaController extends Controller
                     $d['imagen_alt'] ?? null,
                     $d['imagen_enlace'] ?? null,
                     array_key_exists('imagen_nueva_pestana', $d) ? (bool) $d['imagen_nueva_pestana'] : null,
-                ], $this->auditoria($request))
+                ], $this->auditoria($request), [$d['zona'] ?? null])
             );
             return $this->responder($result);
         });
