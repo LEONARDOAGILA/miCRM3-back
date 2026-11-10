@@ -32,12 +32,25 @@ use App\Http\Resources\ApiResponder;
  * sin nada que enseñar no se manda, porque dejaría un hueco con su título y
  * nada debajo.
  *
- * LAS SECCIONES DE PRODUCTOS VIAJAN CON LA FOTO Y EL NOMBRE, y nada más. La
- * tarjeta de la tienda lleva además precio, descuento y existencias, y de eso
- * el catálogo no tiene nada todavía: media tarjeta sacaría todo «Agotado» y a
- * $0. Todas van con la clave `productos` y su `id`: la tienda conmuta por la
- * clave para saber qué pieza pintar, y una clave distinta por sección la
- * obligaría a adivinar.
+ * LAS SECCIONES DE PRODUCTOS van todas con la clave `productos` y su `id`: la
+ * tienda conmuta por la clave para saber qué pieza pintar, y una clave distinta
+ * por sección la obligaría a adivinar. Lo que cambia entre ellas es CUÁNTOS
+ * productos viajan:
+ *
+ *   · las DE FILA —izquierda, derecha, cartel, sola— viajan enteras: son tres,
+ *     cuatro, diez, las que alguien eligió para verlas todas con las flechas;
+ *   · las PAGINADAS viajan con UNA PÁGINA y con sus filtros ya contados sobre
+ *     la lista entera (`total`, `ultima_pagina`, `facetas`). Hacen de catálogo,
+ *     y hasta el 09/11/2026 también viajaban enteras: /tecnologia mandaba sus
+ *     noventa y un productos con la ficha de cada uno —63 KB— para pintar doce
+ *     tarjetas. Las demás páginas y lo que se marque en los filtros los pide la
+ *     tienda a `publico/productos?escaparate=…`.
+ *
+ * LA PRIMERA PÁGINA VIAJA CON LA PÁGINA a propósito, y SIN FILTROS: es lo que
+ * se ve al entrar, y pedirla aparte dejaría /motos con su encabezado y un hueco
+ * hasta que llegara la segunda petición. Por eso tampoco depende de la
+ * dirección del visitante: esta respuesta se guarda un minuto y la comparten
+ * todos.
  *
  * `ahora` VA SIEMPRE Y FUERA DE LA CACHÉ. Es la hora del SERVIDOR, y la usa la
  * cuenta regresiva de las ofertas: si se tomara la del navegador, cualquiera
@@ -146,18 +159,9 @@ class InicioPublicoController extends Controller
             }
             // Las secciones de productos: de la base viene el nombre
             // del fichero de cada foto, y la carpeta es la del
-            // catálogo. Son dos: la que se ve y la que sale al pasar
-            // el mouse por encima.
+            // catálogo.
             if (isset($s['productos']) && is_array($s['productos'])) {
-                $s['productos'] = array_map(function ($p) {
-                    $p['imagen']            = $this->urlImagenDeProducto($p['imagen'] ?? null);
-                    $p['imagen_secundaria'] = $this->urlImagenDeProducto($p['imagen_secundaria'] ?? null);
-                    // El logo de la marca está en OTRA carpeta: es del
-                    // catálogo de Inventarios, no de la tienda. Sin
-                    // logo queda null y la tarjeta escribe el nombre.
-                    $p['marca_logo']        = $this->urlLogoDeMarca($p['marca_logo'] ?? null);
-                    return $p;
-                }, $s['productos']);
+                $s['productos'] = array_map(fn ($p) => $this->conUrlDeProducto($p), $s['productos']);
             }
             // La imagen de AL LADO de una sección de productos. La
             // base ya resolvió si va o no —sin fichero, `lado` sale
@@ -185,5 +189,30 @@ class InicioPublicoController extends Controller
         }, $datos['secciones'] ?? []);
 
         return $datos;
+    }
+
+    /**
+     * Las fotos de una tarjeta de producto.
+     *
+     * ES LA MISMA TARJETA QUE MANDA EL CATÁLOGO, venga de un escaparate de fila
+     * (fn_producto_seccion_publica) o de la primera página de uno paginado
+     * (fn_tienda_productos): las mismas claves y la misma conversión en la
+     * tienda. Lo único que cambia es cuántas fotos trae —el de fila manda las
+     * dos que pinta la tarjeta; el catálogo, la galería entera, que de ahí sale
+     * también la ficha—, y eso no cambia nada aquí.
+     *
+     * EL LOGO DE LA MARCA ESTÁ EN OTRA CARPETA (img/marcas): es del catálogo de
+     * Inventarios, no de la tienda. Sin logo queda null y la tarjeta escribe el
+     * nombre.
+     */
+    private function conUrlDeProducto(array $p): array
+    {
+        $p['imagenes'] = array_values(array_filter(array_map(
+            fn ($archivo) => $this->urlImagenDeProducto($archivo),
+            is_array($p['imagenes'] ?? null) ? $p['imagenes'] : []
+        )));
+        $p['marca_logo'] = $this->urlLogoDeMarca($p['marca_logo'] ?? null);
+
+        return $p;
     }
 }

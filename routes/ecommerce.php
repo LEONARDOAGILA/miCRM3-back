@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ecommerce\ArchivoPublicoController;
 use App\Http\Controllers\ecommerce\CategoriaWebController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
+use App\Http\Controllers\ecommerce\MarcaWebPublicoController;
 use App\Http\Controllers\ecommerce\CuerpoController;
 use App\Http\Controllers\ecommerce\EncabezadoController;
 use App\Http\Controllers\ecommerce\GaleriaController;
@@ -58,6 +59,10 @@ Route::group(['prefix' => 'publico'], function () {
     // El árbol de categorías: el desplegable del encabezado y los filtros de
     // /shop. Va anidado, no plano.
     Route::get('categorias-menu',  [CategoriaWebPublicoController::class, 'menu']);
+
+    // Y el de al lado: las marcas visibles, en su orden, con su enlace ya
+    // decidido. Plano, porque una marca no tiene marcas dentro.
+    Route::get('marcas-menu',      [MarcaWebPublicoController::class, 'menu']);
 
     // La portada: la lista de secciones en su orden. Crece sola segun se
     // migran sus fuentes; la tienda ignora las claves que no conoce.

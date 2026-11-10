@@ -183,6 +183,7 @@ class MarcaWebController extends Controller
             $r = json_decode($result->result, true);
 
             InicioPublicoController::limpiar();
+            MarcaWebPublicoController::limpiar();
 
             $data = array_map(function ($m) {
                 $m['logo_url'] = $this->urlLogoDeMarca($m['logo'] ?? null);
@@ -215,6 +216,7 @@ class MarcaWebController extends Controller
             $r = json_decode($result->result, true);
 
             InicioPublicoController::limpiar();
+            MarcaWebPublicoController::limpiar();
 
             $data = array_map(function ($m) {
                 $m['logo_url'] = $this->urlLogoDeMarca($m['logo'] ?? null);
@@ -249,6 +251,7 @@ class MarcaWebController extends Controller
             $r = json_decode($result->result, true);
 
             InicioPublicoController::limpiar();
+            MarcaWebPublicoController::limpiar();
 
             $data = array_map(function ($m) {
                 $m['logo_url'] = $this->urlLogoDeMarca($m['logo'] ?? null);
@@ -473,6 +476,7 @@ class MarcaWebController extends Controller
             }
 
             InicioPublicoController::limpiar();
+            MarcaWebPublicoController::limpiar();
 
             sistemaLog('info', 'Papelera de imágenes de marca vaciada', ['marca' => (int) $marca]);
             return $this->successResponse($this->conUrl($r['data']['marca'] ?? null), $r['message']);

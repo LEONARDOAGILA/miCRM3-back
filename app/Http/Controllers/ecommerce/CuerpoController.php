@@ -137,8 +137,9 @@ class CuerpoController extends Controller
      * Contesta y tira las dos cachés públicas.
      *
      * La de las páginas porque sus secciones pueden haber cambiado de sitio, y
-     * la del menú de categorías porque cada categoría lleva ahí a dónde va: a
-     * su página si tiene, y al catálogo filtrado si no.
+     * las de los dos menús del encabezado porque cada categoría y cada marca
+     * llevan ahí a dónde van: a su página si tienen, y al catálogo filtrado si
+     * no.
      */
     private function responder($result)
     {
@@ -146,6 +147,7 @@ class CuerpoController extends Controller
 
         InicioPublicoController::limpiar();
         CategoriaWebPublicoController::limpiar();
+        MarcaWebPublicoController::limpiar();
 
         return $this->successResponse($r['data'] ?? null, $r['message'] ?? 'Cuerpos de la tienda');
     }

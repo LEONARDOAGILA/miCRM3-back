@@ -124,6 +124,9 @@ Route::group([
     Route::post('addProducto',          [ProductoController::class, 'addProducto']);
     Route::post('editProducto/{id}',    [ProductoController::class, 'editProducto']);
     Route::post('activarProducto/{id}', [ProductoController::class, 'activarProducto']);   // { activo? }; sin ella, alterna
+    // La palanca de la tienda web, aparte de `activo`: esconde el producto de
+    // internet sin impedir venderlo en el mostrador
+    Route::post('enPaginaWebProducto/{id}', [ProductoController::class, 'enPaginaWebProducto']);   // { en_paginaweb? }; sin ella, alterna
     Route::delete('deleteProducto/{id}',[ProductoController::class, 'deleteProducto']);
 
     // Lo relleno de la plantilla de su categoría

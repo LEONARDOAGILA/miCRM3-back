@@ -46,11 +46,31 @@ class ProductoPublicoController extends Controller
     use ApiResponder;
     use ImagenesDelEcommerce;
 
-    /** Los parámetros que entiende el catálogo. Lo demás se ignora. */
+    /**
+     * Los parámetros que entiende el catálogo. Lo demás se ignora.
+     *
+     * `escaparate` es una lista de productos armada a mano en el CRM
+     * (ecommerce.producto_secciones): con él, el catálogo busca SÓLO dentro de
+     * esa lista y en el orden que se le dio allá. Es lo que piden los
+     * escaparates paginados del inicio —/motos, /tecnologia— desde el
+     * 09/11/2026: antes se traían sus productos enteros dentro de la página y
+     * los paginaba el navegador.
+     */
     private const FILTROS = [
         'search', 'categoria', 'marca', 'sort', 'price_min', 'price_max',
-        'page', 'per_page', 'motos',
+        'page', 'per_page', 'motos', 'escaparate',
     ];
+
+    /**
+     * Cuántos filtros por característica se aceptan de una dirección, y
+     * cuántos valores marcados en cada uno.
+     *
+     * NO ES UNA VALIDACIÓN, ES UN TOPE: una dirección escrita a mano con mil
+     * claves haría mil cruces en la base por cada producto. Lo que llegue de
+     * más se recorta y la página sale igual.
+     */
+    private const MAXIMO_FACETAS = 20;
+    private const MAXIMO_MARCADOS = 50;
 
     public const CACHE_PREFIJO = 'ecommerce.buscador.';
     private const MINUTOS = 1;
@@ -185,7 +205,93 @@ class ProductoPublicoController extends Controller
                 $filtros[$clave] = (string) $valor;
             }
         }
+
+        $facetas = $this->facetasDe($request);
+        if ($facetas !== null) {
+            $filtros['facetas'] = $facetas;
+        }
         return $filtros;
+    }
+
+    /**
+     * Los filtros por característica, que llegan como JSON.
+     *
+     * `?facetas={"listas":{"color":["Rojo"]},"rangos":{"cilindraje":{"desde":150}}}`
+     *
+     * VIENEN COMO JSON Y NO COMO EL TEXTO QUE LLEVA LA DIRECCIÓN DE LA TIENDA
+     * (`color:Rojo|cilindraje:150..`): ese texto ya lleva sus valores
+     * codificados, y meterlo en un parámetro lo codificaría otra vez —un
+     * espacio pasaría de «%20» a «%2520»— y el valor que llegaría aquí no
+     * sería el que se marcó. La tienda ya tiene lo marcado desarmado; mandarlo
+     * desarmado es lo que no se puede escribir mal.
+     *
+     * LO QUE NO SE ENTIENDA SE TIRA, igual que el resto de los filtros: una
+     * dirección escrita a mano no puede dejar la tienda en blanco ni con un
+     * 500. Lo que sobre del tope se recorta.
+     */
+    private function facetasDe(Request $request): ?array
+    {
+        $crudo = $request->query('facetas');
+        if (!is_string($crudo) || trim($crudo) === '') {
+            return null;
+        }
+
+        $leido = json_decode($crudo, true);
+        if (!is_array($leido)) {
+            return null;
+        }
+
+        $listas = [];
+        $rangos = [];
+        $cuantas = 0;
+
+        foreach ((array) ($leido['listas'] ?? []) as $clave => $valores) {
+            if ($cuantas >= self::MAXIMO_FACETAS || !is_string($clave) || !is_array($valores)) {
+                continue;
+            }
+            $limpios = [];
+            foreach ($valores as $valor) {
+                if (!is_scalar($valor)) {
+                    continue;
+                }
+                $texto = trim((string) $valor);
+                if ($texto !== '' && !in_array($texto, $limpios, true)) {
+                    $limpios[] = $texto;
+                }
+                if (count($limpios) >= self::MAXIMO_MARCADOS) {
+                    break;
+                }
+            }
+            if ($limpios !== []) {
+                $listas[$clave] = $limpios;
+                $cuantas++;
+            }
+        }
+
+        foreach ((array) ($leido['rangos'] ?? []) as $clave => $caja) {
+            if ($cuantas >= self::MAXIMO_FACETAS || !is_string($clave) || !is_array($caja)) {
+                continue;
+            }
+            // Cualquiera de los dos extremos puede faltar: «hasta 30.000»
+            // también es un rango
+            $desde = isset($caja['desde']) && is_numeric($caja['desde']) ? (float) $caja['desde'] : null;
+            $hasta = isset($caja['hasta']) && is_numeric($caja['hasta']) ? (float) $caja['hasta'] : null;
+
+            if ($desde !== null || $hasta !== null) {
+                $rangos[$clave] = ['desde' => $desde, 'hasta' => $hasta];
+                $cuantas++;
+            }
+        }
+
+        if ($listas === [] && $rangos === []) {
+            return null;
+        }
+        // Objetos y no listas: con todo vacío, json_encode escribiría `[]` y
+        // la base espera un objeto por el que preguntar clave a clave
+        return [
+            'listas' => (object) $listas,
+            'rangos' => (object) $rangos,
+        ];
     }
 
     /** La búsqueda, con las direcciones de las fotos ya puestas. */
@@ -206,6 +312,10 @@ class ProductoPublicoController extends Controller
      * Las fotos de los productos están en `img/productos`, que es del catálogo
      * de Inventarios: las sube quien da de alta el producto, no quien arma la
      * tienda.
+     *
+     * EL LOGO DE LA MARCA VA EN OTRA CARPETA (`img/marcas`) y por eso se arma
+     * aparte. Es de la tarjeta: la pastilla de debajo del nombre enseña el logo
+     * si la marca tiene uno y, si no, su nombre.
      */
     private function conUrls(array $productos): array
     {
@@ -214,6 +324,12 @@ class ProductoPublicoController extends Controller
                 fn ($archivo) => $this->urlImagenDeProducto($archivo),
                 is_array($p['imagenes'] ?? null) ? $p['imagenes'] : []
             )));
+            // Sólo si la clave viene: ponerla donde no estaba haría que la
+            // tienda creyera que ese producto trae marca_logo y es null, que
+            // no es lo mismo que «esta respuesta no habla de logos»
+            if (array_key_exists('marca_logo', $p)) {
+                $p['marca_logo'] = $this->urlLogoDeMarca($p['marca_logo'] ?? null);
+            }
             return $p;
         }, $productos);
     }
