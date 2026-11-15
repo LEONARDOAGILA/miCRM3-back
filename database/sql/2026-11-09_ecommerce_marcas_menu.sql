@@ -57,30 +57,30 @@ BEGIN
     v_menu := ecommerce.fn_marcas_web_menu_publico();
 
     IF jsonb_typeof(v_menu) IS DISTINCT FROM 'array' THEN
-        v_falta := v_falta || 'el menú no es una lista';
+        v_falta := array_append(v_falta, 'el menú no es una lista');
     END IF;
 
     SELECT count(*) INTO v_cuantas
       FROM ecommerce.fn_marcas_web_estado() WHERE estado = 'visible';
 
     IF jsonb_array_length(v_menu) <> v_cuantas THEN
-        v_falta := v_falta || format('salen %s marcas y hay %s visibles',
-                                     jsonb_array_length(v_menu), v_cuantas);
+        v_falta := array_append(v_falta, format('salen %s marcas y hay %s visibles',
+                                     jsonb_array_length(v_menu), v_cuantas));
     END IF;
 
     IF jsonb_array_length(v_menu) > 0 THEN
         v_una := v_menu -> 0;
 
         IF (v_una ->> 'id') IS NULL OR COALESCE(btrim(v_una ->> 'nombre'), '') = '' THEN
-            v_falta := v_falta || 'hay una marca sin id o sin nombre';
+            v_falta := array_append(v_falta, 'hay una marca sin id o sin nombre');
         END IF;
 
         IF COALESCE(v_una ->> 'enlace', '') NOT LIKE '/%' THEN
-            v_falta := v_falta || format('el enlace no es una ruta de la tienda: %s', v_una ->> 'enlace');
+            v_falta := array_append(v_falta, format('el enlace no es una ruta de la tienda: %s', v_una ->> 'enlace'));
         END IF;
 
         IF v_una -> 'hijos' IS DISTINCT FROM '[]'::jsonb THEN
-            v_falta := v_falta || 'los hijos tienen que venir, y vacíos';
+            v_falta := array_append(v_falta, 'los hijos tienen que venir, y vacíos');
         END IF;
 
         -- Ordenadas: orden_web primero y, sin él, por nombre
@@ -92,7 +92,7 @@ BEGIN
                AND (SELECT count(*) FROM ecommerce.fn_marcas_web_estado()
                      WHERE estado = 'visible' AND orden_web IS NOT NULL) = 0)
         THEN
-            v_falta := v_falta || 'sin orden_web tenían que salir por nombre';
+            v_falta := array_append(v_falta, 'sin orden_web tenían que salir por nombre');
         END IF;
     END IF;
 

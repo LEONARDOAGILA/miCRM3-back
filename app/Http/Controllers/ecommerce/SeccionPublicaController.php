@@ -60,6 +60,13 @@ class SeccionPublicaController extends Controller
                 // la primera las dejaba sin `url`: la tienda no pinta una
                 // imagen sin dirección, así que la columna salía vacía.
                 foreach ($datos as &$seccion) {
+                    // El logo del encabezado, si lo subieron en el CRM. Sin él
+                    // la tienda pinta el suyo, así que la clave viaja igual
+                    // (null) y allá se decide
+                    if (($seccion['clave'] ?? null) === 'header') {
+                        $seccion['logo'] = $this->urlImagenEcommerce($seccion['logo'] ?? null);
+                    }
+
                     foreach (['grupos', 'grupos_abajo'] as $franja) {
                         // `$seccion[$franja] ?? []` dentro del foreach NO vale: el `??`
                         // devuelve una copia y la referencia escribiría en ella, no en

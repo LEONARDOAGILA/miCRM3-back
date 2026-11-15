@@ -293,6 +293,11 @@ Route::group([
     Route::get('getEncabezado',   [EncabezadoController::class, 'getEncabezado']);   // config + menú
     Route::post('editEncabezado', [EncabezadoController::class, 'editEncabezado']);  // { config }
 
+    // El logo: va aparte de la configuración porque aquélla reescribe el
+    // config entero y se lo llevaría por delante
+    Route::post('logo',           [EncabezadoController::class, 'logo']);            // { logo: fichero }
+    Route::delete('logo',         [EncabezadoController::class, 'quitarLogo']);      // vuelve al de la tienda
+
     Route::post('addEnlace',           [EncabezadoController::class, 'addEnlace']);                        // { padre_id?, texto, … }
     Route::post('editEnlace/{id}',     [EncabezadoController::class, 'editEnlace'])->whereNumber('id');
     Route::post('activarEnlace/{id}',  [EncabezadoController::class, 'activarEnlace'])->whereNumber('id'); // { activo? }; sin ella, alterna

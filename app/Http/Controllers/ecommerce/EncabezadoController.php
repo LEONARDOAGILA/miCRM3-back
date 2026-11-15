@@ -31,6 +31,8 @@ use App\Http\Resources\ApiResponder;
  *
  *   GET    ecommerce/encabezado/getEncabezado
  *   POST   ecommerce/encabezado/editEncabezado             { config }
+ *   POST   ecommerce/encabezado/logo                       { logo: fichero }
+ *   DELETE ecommerce/encabezado/logo                       vuelve al de la tienda
  *   POST   ecommerce/encabezado/addEnlace                  { padre_id?, texto, enlace?, icono?, … }
  *   POST   ecommerce/encabezado/editEnlace/{id}
  *   POST   ecommerce/encabezado/activarEnlace/{id}         { activo? }; sin ella, alterna
@@ -44,6 +46,7 @@ class EncabezadoController extends Controller
 {
     use ApiResponder;
     use \App\Http\Controllers\Concerns\AccesoDeLaPantalla;
+    use \App\Http\Controllers\Concerns\ImagenesDelEcommerce;
 
     private const ERRORES_NEGOCIO = [
         'P0001' => 422,   // falta un dato obligatorio
@@ -105,11 +108,98 @@ class EncabezadoController extends Controller
     {
         $r = json_decode($result->result, true);
 
+        // En la base va el NOMBRE del fichero del logo; la dirección se arma
+        // aquí, como con el resto de imágenes del ecommerce
+        if (isset($r['data']) && is_array($r['data'])) {
+            $r['data']['logo_url'] = $this->urlImagenEcommerce($r['data']['logo'] ?? null);
+        }
+
         // Lo que ve la tienda esta en cache: si no se tira aqui, el cambio
         // tarda hasta diez minutos en salir y parece que no se guardo.
         SeccionPublicaController::limpiar();
 
         return $this->successResponse($r['data'] ?? null, $r['message'] ?? $porDefecto);
+    }
+
+    // ================================================================
+    // EL LOGO
+    // ================================================================
+    //
+    // VA POR SU PROPIA PUERTA, no con `editEncabezado`: aquélla reescribe el
+    // `config` entero, así que guardar los textos de la franja se llevaría por
+    // delante el logo. Por eso vive en su columna y se cambia aparte.
+
+    /** Sube (o reemplaza) el logo del encabezado. */
+    public function logo(Request $request)
+    {
+        try {
+            if (!$request->hasFile('logo')) {
+                return $this->errorResponse('Hace falta la imagen del logo', 422);
+            }
+
+            [$nuevo, $error] = $this->guardarImagenEcommerce($request->file('logo'));
+            if ($error !== null) {
+                return $this->errorResponse($error, 422);
+            }
+
+            try {
+                $result = DB::selectOne(
+                    'SELECT ecommerce.fn_encabezado_logo(?::TEXT, ' . self::CASTS_AUDIT . ') as result',
+                    array_merge([$nuevo], $this->auditoria($request))
+                );
+            } catch (QueryException $e) {
+                // La fila no llegó a guardarse: el fichero recién subido se
+                // quedaría en el disco sin que nada apunte a él
+                $this->borrarImagenEcommerce($nuevo);
+                throw $e;
+            }
+
+            sistemaLog('info', 'Logo del encabezado cambiado');
+            return $this->responderLogo($result, $nuevo);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al cambiar el logo', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Lo quita: la tienda vuelve a pintar el suyo. */
+    public function quitarLogo(Request $request)
+    {
+        try {
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezado_logo(?::TEXT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([null], $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Logo del encabezado quitado');
+            return $this->responderLogo($result, null);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al quitar el logo', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Contesta y borra del disco el logo que acaba de dejar de usarse.
+     *
+     * Es una sola fila y el nombre del fichero lo pone el servidor al azar, así
+     * que nadie más puede estar apuntando al que se va.
+     */
+    private function responderLogo($result, ?string $nuevo)
+    {
+        $r = json_decode($result->result, true);
+        $anterior = $r['anterior'] ?? null;
+
+        if ($anterior && $anterior !== $nuevo) {
+            $this->borrarImagenEcommerce($anterior);
+        }
+
+        return $this->responder($result, 'Logo actualizado');
     }
 
     // ================================================================
@@ -176,6 +266,9 @@ class EncabezadoController extends Controller
                 'icono'         => 'nullable|string|max:40',
                 'activo'        => 'nullable|boolean',
                 'nueva_pestana' => 'nullable|boolean',
+                // Píldora al final de la barra roja. La base lo apaga sola si
+                // el enlace cuelga de un desplegable o si abre uno.
+                'destacado'     => 'nullable|boolean',
             ], [
                 'texto.required' => 'El texto del enlace es obligatorio',
                 'texto.max'      => 'El texto no puede superar los 60 caracteres',
@@ -187,7 +280,7 @@ class EncabezadoController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_encabezado_enlaces_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, '
-                . '?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $id,
                     // Al modificar, el padre lo decide la base (no se cambia aquí)
@@ -197,6 +290,7 @@ class EncabezadoController extends Controller
                     $d['icono'] ?? null,
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
                     array_key_exists('nueva_pestana', $d) ? (bool) $d['nueva_pestana'] : null,
+                    array_key_exists('destacado', $d) ? (bool) $d['destacado'] : false,
                 ], $this->auditoria($request))
             );
 
