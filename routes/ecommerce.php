@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ecommerce\ArchivoPublicoController;
+use App\Http\Controllers\ecommerce\AuthTiendaController;
+use App\Http\Controllers\ecommerce\CarritoPublicoController;
 use App\Http\Controllers\ecommerce\CategoriaWebController;
 use App\Http\Controllers\ecommerce\CategoriaWebPublicoController;
 use App\Http\Controllers\ecommerce\MarcaWebPublicoController;
@@ -89,6 +91,53 @@ Route::group(['prefix' => 'publico'], function () {
     // Y el desplegable del encabezado, mientras se escribe: la MISMA búsqueda,
     // con unas pocas fichas y sus sugerencias.
     Route::get('buscador',         [ProductoPublicoController::class, 'buscador']);
+
+    // EL CARRITO. El `token` no es una sesión: es el identificador del
+    // carrito, lo da el servidor en el primer «agregar» y la tienda lo
+    // guarda. Los precios NO viajan hacia acá: se dice qué producto y
+    // cuántos, y los importes los pone la base con el catálogo de ese momento.
+    //
+    // Todo por POST menos ver, incluido quitar y vaciar: un DELETE con cuerpo
+    // es terreno pantanoso y el cuerpo lleva el token.
+    Route::get('carrito',          [CarritoPublicoController::class, 'ver']);               // ?token=
+
+    // LAS QUE ESCRIBEN VAN CON TOPE (120 por minuto y por IP, ver
+    // RouteServiceProvider): crean filas sin que nadie haya iniciado sesión.
+    // 120 le sobra a cualquiera comprando —cada clic es una llamada— y le
+    // estorba a un script que quiera llenar la tabla de carritos.
+    Route::middleware('throttle:tienda-carrito')->group(function () {
+        Route::post('carrito/agregar', [CarritoPublicoController::class, 'agregar']);       // { token?, producto_id, cantidad? }
+        Route::post('carrito/cantidad',[CarritoPublicoController::class, 'cantidad']);      // { token, producto_id, cantidad }
+        Route::post('carrito/quitar',  [CarritoPublicoController::class, 'quitar']);        // { token, producto_id }
+        Route::post('carrito/vaciar',  [CarritoPublicoController::class, 'vaciar']);        // { token }
+    });
+
+    // ------------------------------------------------------------------
+    // LAS CUENTAS DE LA TIENDA
+    // ------------------------------------------------------------------
+    // La OTRA puerta. Se entra con el CORREO, el token lleva `ambito=tienda`
+    // y no sirve para el CRM; y al revés, un usuario del CRM no entra por
+    // aquí. Nada de horarios ni de tope de sesiones: eso es del personal.
+    //
+    // Con tope de llamadas, como el carrito: son puertas abiertas que crean
+    // cuentas y mandan correos. El registro más estrecho que el resto.
+    Route::prefix('auth')->group(function () {
+        // Los topes van con NOMBRE (ver RouteServiceProvider): un
+        // `throttle:5,1` suelto se agrupa por dominio e IP —no por ruta—, así
+        // que todas estas puertas compartirían un único contador
+        Route::post('registro',      [AuthTiendaController::class, 'registro'])->middleware('throttle:tienda-registro');
+        Route::post('login',         [AuthTiendaController::class, 'login'])->middleware('throttle:tienda-login');
+        Route::post('verificar',     [AuthTiendaController::class, 'verificar'])->middleware('throttle:tienda-codigo');
+        Route::post('reenviar',      [AuthTiendaController::class, 'reenviar'])->middleware('throttle:tienda-codigo');
+        Route::post('recuperar',     [AuthTiendaController::class, 'recuperar'])->middleware('throttle:tienda-codigo');
+        Route::post('cambiar-clave', [AuthTiendaController::class, 'cambiarClave'])->middleware('throttle:tienda-codigo');
+
+        // Con la sesión de la tienda puesta
+        Route::middleware('tienda.auth')->group(function () {
+            Route::get('yo',    [AuthTiendaController::class, 'yo']);
+            Route::post('salir',[AuthTiendaController::class, 'salir']);
+        });
+    });
 
     // Páginas de texto
     Route::get('documentos',       [PaginaInformativaPublicoController::class, 'documentos']);

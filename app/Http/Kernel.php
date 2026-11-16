@@ -116,5 +116,9 @@ class Kernel extends HttpKernel
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         'usuario.activo' => \App\Http\Middleware\VerificarUsuarioActivo::class, // JGSJ LPAA MIDDLEWARE USUARIO ACTIVO usuario.activo
+        // La otra puerta: la sesión de un cliente en la tienda en línea. No
+        // mira horario ni cuenta sesiones, y sólo acepta tokens emitidos por
+        // la puerta de la tienda (ver SesionTienda)
+        'tienda.auth' => \App\Http\Middleware\SesionTienda::class,
     ];
 }

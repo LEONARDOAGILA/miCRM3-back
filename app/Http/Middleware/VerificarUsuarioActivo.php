@@ -27,6 +27,29 @@ class VerificarUsuarioActivo
                 ], 401);
             }
 
+            // 2.bis UNA CUENTA, UNA PUERTA
+            //
+            // Las cuentas de la tienda (type_user = 4) viven en esta misma
+            // tabla y su token lo firma el mismo JWT, así que sin esto un
+            // cliente de la página web tendría un token válido para TODO el
+            // CRM: `jwt.auth` sólo comprueba la firma, no de qué tipo es
+            // quien entra. La defensa no puede quedar en que cada pantalla se
+            // acuerde de mirar sus accesos.
+            //
+            // Va aquí y no en cada grupo de rutas porque este middleware está
+            // en todos: los grupos del CRM llevan siempre `jwt.auth` Y
+            // `usuario.activo`.
+            if ((int) $user->type_user === 4) {
+                sistemaLog('warning', 'Acceso denegado: cuenta de la tienda en el CRM', [
+                    'user_id'    => $user->id,
+                    'login_user' => $user->login_user,
+                    'ip'         => $request->ip(),
+                ]);
+                return response()->json([
+                    'message' => 'Esta cuenta es de la tienda en línea y no tiene acceso al sistema.',
+                ], 401);
+            }
+
             // 3. Validar que su TIPO de usuario esté vigente
             //
             // El tipo (del sistema, web, freelance, temporal…) puede tener

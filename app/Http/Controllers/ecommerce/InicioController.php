@@ -56,6 +56,13 @@ use App\Http\Resources\ApiResponder;
  * desde aquí las sacaría deformadas, y eso no se arregla luego desde una
  * pantalla de administración.
  *
+ * UN BANNER SÍ TIENE EL SUYO: `alto_imagen`, que es el alto de la franja de
+ * imágenes. Ahí no hay nada que deformar —la foto se recorta desde el centro
+ * para llenarla, como un fondo—, y es lo que hace que dos banners seguidos
+ * midan lo mismo aunque sus imágenes vengan de proporciones distintas. Sin
+ * elegir nada vale «imagen»: el alto que traiga cada foto, que es lo de
+ * siempre.
+ *
  * LOS BOTONES DE LA TARJETA LLEVAN FONDO Y LETRA, los dos opcionales. Sin
  * fondo, el de la tienda; sin letra, la que se lea encima del fondo, que la
  * calcula la tienda. Así cambiar un color no obliga a elegir dos, y elegir
@@ -65,6 +72,7 @@ use App\Http\Resources\ApiResponder;
  *
  *   POST ecommerce/inicio/editSeccion/{id}          { titulo?, subtitulo?, rotulo_tamano?,
  *                                                     rotulo_color?, rotulo_fuente?, alto?,
+ *                                                     alto_imagen? (sólo los banners),
  *                                                     boton_<b>_color?, boton_<b>_texto?
  *                                                       con <b>: favorito | carrito | whatsapp | tarjeta,
  *                                                     descuento_color?, descuento_texto?,
@@ -217,6 +225,10 @@ class InicioController extends Controller
                 'rotulo_color'  => 'nullable|string|max:7',
                 'rotulo_fuente' => 'nullable|string|max:10',
                 'alto'          => 'nullable|string|max:10',
+                // Y el alto de la FRANJA DE IMÁGENES de un banner, que es otra
+                // cosa: aquél es el aire de alrededor y éste lo que ocupan las
+                // fotos. La lista de valores también la tiene la base.
+                'alto_imagen'   => 'nullable|string|max:10',
                 // El fondo de los cuatro botones de la tarjeta, en secciones
                 // de productos. 7 por «#rrggbb», y la base es quien dice si es
                 // un color de verdad.
