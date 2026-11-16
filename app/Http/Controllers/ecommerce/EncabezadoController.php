@@ -348,6 +348,41 @@ class EncabezadoController extends Controller
         }
     }
 
+    /**
+     * Mueve un enlace: lo cuelga de otro y lo pone en su sitio.
+     *
+     * ES LO QUE HACE EL ARRASTRE DE LA REJILLA, y por eso van juntos el padre
+     * y la posición: soltar una fila dice las dos cosas a la vez. `ordenar`
+     * sigue existiendo para mover dentro de la misma rama sin tocar el padre.
+     *
+     * `padre_id` vacío lo saca a principal; `antes_de` vacío lo deja el último
+     * de sus hermanos.
+     */
+    public function moverEnlace(Request $request, $id)
+    {
+        try {
+            $d = $this->datosDe($request);
+            $aEntero = static fn ($v) => ($v === null || $v === '' || $v === 'null') ? null : (int) $v;
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezado_enlaces_mover(?::BIGINT, ?::BIGINT, ?::BIGINT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $aEntero($d['padre_id'] ?? null), $aEntero($d['antes_de'] ?? null)],
+                            $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Enlace del encabezado movido', ['id' => (int) $id]);
+            return $this->responder($result);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en moverEnlace', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
     public function deleteEnlace(Request $request, $id)
     {
         try {

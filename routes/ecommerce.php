@@ -302,7 +302,10 @@ Route::group([
     Route::post('editEnlace/{id}',     [EncabezadoController::class, 'editEnlace'])->whereNumber('id');
     Route::post('activarEnlace/{id}',  [EncabezadoController::class, 'activarEnlace'])->whereNumber('id'); // { activo? }; sin ella, alterna
     Route::post('ordenarEnlaces',      [EncabezadoController::class, 'ordenarEnlaces']);                   // { ids: [...] }
-    Route::delete('deleteEnlace/{id}', [EncabezadoController::class, 'deleteEnlace'])->whereNumber('id');  // se lleva sus desplegables
+    // El arrastre de la rejilla: cambia de padre y de sitio a la vez. El menú
+    // no tiene límite de niveles; lo único que no se admite es un ciclo
+    Route::post('moverEnlace/{id}',    [EncabezadoController::class, 'moverEnlace'])->whereNumber('id');   // { padre_id?, antes_de? }
+    Route::delete('deleteEnlace/{id}', [EncabezadoController::class, 'deleteEnlace'])->whereNumber('id');  // se lleva su rama
 
     Route::get('papelera',          [EncabezadoController::class, 'papelera']);
     Route::post('restaurar',        [EncabezadoController::class, 'restaurar']);      // { ids: [...] }
