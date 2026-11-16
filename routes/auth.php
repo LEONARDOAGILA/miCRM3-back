@@ -24,7 +24,10 @@ Route::group([
     // throttle:login -> 5 intentos/min por cuenta+IP y 20/min por IP.
     // Sin esto heredan el throttle:auth del grupo, que son 10.000/min.
     Route::post('/login', [AuthController::class, 'login'])->name('login')->middleware('throttle:login');
-    Route::post('/login_ecommerce', [AuthController::class, 'login_ecommerce'])->name('login_ecommerce')->middleware('throttle:login');
+    // AQUÍ HABÍA UN `/login_ecommerce` que apuntaba a un método que no existe
+    // (quedó del CRM anterior): quien lo llamara recibía un 500. La tienda
+    // entra por su propia puerta, `ecommerce/publico/auth/login`, que no
+    // comparte horario, ni tope de sesiones, ni token con el CRM.
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::post('/refresh', [AuthController::class, 'refresh'])->name('refresh');
     Route::post('/me', [AuthController::class, 'me'])->name('me');
@@ -157,6 +160,8 @@ Route::group([
     Route::get('/allHorarios', [HorarioController::class, 'allHorarios']);
     Route::get('/listHorarios', [HorarioController::class, 'listHorarios']);
     Route::get('/getHorario/{id}', [HorarioController::class, 'getHorario']);
+    // Probar el horario contra una fecha y hora: ¿se podría entrar?
+    Route::get('/puedeEntrar/{id}', [HorarioController::class, 'puedeEntrar']);   // ?fecha_hora=
     Route::post('/addHorario', [HorarioController::class, 'addHorario']);
     Route::post('/editHorario/{id}', [HorarioController::class, 'editHorario']);
     Route::post('/activarHorario/{id}', [HorarioController::class, 'activarHorario']);   // { activo? }; sin ella, alterna

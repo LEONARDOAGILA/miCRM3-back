@@ -30,7 +30,7 @@ class RouteServiceProvider extends ServiceProvider
         // });
 
         //lpaa -> codigo que controla 10000 solicitudos por minuto y por usuario
-        foreach (['api', 'auth', 'config', 'rh', 'ventas', 'inventarios'] as $key) {
+        foreach (['api', 'auth', 'config', 'rh', 'ventas', 'inventarios', 'contabilidad', 'core', 'reportes', 'ecommerce'] as $key) {
             RateLimiter::for($key, function (Request $request) {
                 return Limit::perMinute(10000)->by($request->user()?->id ?: $request->ip());
             });
@@ -86,6 +86,57 @@ class RouteServiceProvider extends ServiceProvider
         });
 
 
+        /*
+         * LAS PUERTAS ABIERTAS DE LA TIENDA.
+         *
+         * Son las únicas que crean filas o mandan correos sin que nadie haya
+         * iniciado sesión, así que llevan freno propio.
+         *
+         * VAN CON NOMBRE Y NO COMO `throttle:5,1`: un throttle numérico sin
+         * usuario identificado se agrupa por DOMINIO + IP —no por ruta—, así
+         * que todas las puertas acabarían compartiendo un mismo contador y
+         * llenar el carrito dejaría a la gente sin poder registrarse. Con
+         * `by()` cada una tiene el suyo.
+         */
+        RateLimiter::for('tienda-registro', function (Request $request) {
+            return Limit::perMinute(10)->by('tienda-reg:' . $request->ip());
+        });
+
+        RateLimiter::for('tienda-login', function (Request $request) {
+            $cuenta = strtolower(trim((string) $request->input('email')));
+
+            // Dos a la vez, como en el login del CRM: contra una cuenta
+            // concreta y contra el barrido de muchas desde la misma IP
+            return [
+                Limit::perMinute(5)->by('tienda-login:' . $cuenta . '|' . $request->ip()),
+                Limit::perMinute(20)->by('tienda-login-ip:' . $request->ip()),
+            ];
+        });
+
+        /*
+         * Los códigos de seis dígitos (confirmar el correo y la contraseña).
+         *
+         * Un millón de combinaciones y ninguna cuenta de intentos fallidos en
+         * la base: sin este freno se revientan por fuerza bruta. Por hora y
+         * por CUENTA, para que no baste con cambiar de IP.
+         */
+        RateLimiter::for('tienda-codigo', function (Request $request) {
+            $cuenta = strtolower(trim((string) $request->input('email')));
+
+            return [
+                Limit::perMinute(5)->by('tienda-cod-ip:' . $request->ip()),
+                Limit::perHour(20)->by('tienda-cod:' . $cuenta),
+            ];
+        });
+
+        /*
+         * El carrito. Más suelto que todo lo anterior: cada clic en «+» es una
+         * llamada, y quien compra hace muchas seguidas.
+         */
+        RateLimiter::for('tienda-carrito', function (Request $request) {
+            return Limit::perMinute(120)->by('tienda-carrito:' . $request->ip());
+        });
+
         //lpaa -> rutas como los modulos
         $this->routes(function () {
 
@@ -115,10 +166,36 @@ class RouteServiceProvider extends ServiceProvider
                 ->namespace($this->namespace)
                 ->group(base_path('routes/ventas.php'));
 
+            // La estructura de la empresa (sucursales, puntos de venta): no
+            // es de ventas, de ella cuelgan también rh e inventarios
+            Route::prefix('core')
+                ->middleware('core')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/core.php'));
+
             Route::prefix('inventarios')
                 ->middleware('inventarios')
                 ->namespace($this->namespace)
                 ->group(base_path('routes/inventarios.php'));
+
+            Route::prefix('contabilidad')
+                ->middleware('contabilidad')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/contabilidad.php'));
+
+            // La página web: lo de /ecommerce/publico lo pide la TIENDA sin
+            // token, así que este grupo no lleva autenticación; la pone cada
+            // ruta de administración dentro del fichero.
+            Route::prefix('ecommerce')
+                ->middleware('ecommerce')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/ecommerce.php'));
+
+            // Los tableros de reportería: leen y no escriben nada
+            Route::prefix('reportes')
+                ->middleware('reportes')
+                ->namespace($this->namespace)
+                ->group(base_path('routes/reportes.php'));
 
 
             Route::middleware('web')

@@ -16,7 +16,9 @@ return [
     */
 
     //lpaa -> configura todas las rutas para evitar error de cors
-    'paths' => ['api/*','web/*', 'auth/*', 'config/*', 'rh/*', 'ventas/*', 'inventarios/*', 'crm/*', 'broadcasting/auth'   , 'sanctum/csrf-cookie'],
+    // Un prefijo que no esté aquí no responde a Angular: el navegador corta la
+    // petición antes de llegar y lo único que se ve es «Error en el servidor».
+    'paths' => ['api/*','web/*', 'auth/*', 'config/*', 'rh/*', 'ventas/*', 'core/*', 'inventarios/*', 'contabilidad/*', 'reportes/*', 'ecommerce/*', 'crm/*', 'broadcasting/auth'   , 'sanctum/csrf-cookie'],
 
 
 

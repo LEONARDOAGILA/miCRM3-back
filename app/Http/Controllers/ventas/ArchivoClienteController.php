@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\ventas;
 
 use App\Http\Controllers\Controller;
-use App\Http\Controllers\config\ArchivoController;
+use App\Http\Controllers\core\ArchivoController;
 use App\Http\Resources\ApiResponder;
 use Exception;
 use Illuminate\Database\QueryException;

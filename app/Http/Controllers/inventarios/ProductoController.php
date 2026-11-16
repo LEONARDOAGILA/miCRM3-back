@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
+use App\Http\Controllers\ecommerce\InicioPublicoController;
+use App\Http\Controllers\ecommerce\SeccionPublicaController;
 
 /**
  * CRUD de productos (inventarios.productos) y su galería de imágenes.
@@ -29,6 +31,7 @@ use App\Http\Resources\ApiResponder;
  *   POST   inventarios/producto/addProducto
  *   POST   inventarios/producto/editProducto/{id}
  *   POST   inventarios/producto/activarProducto/{id}         { activo? }; sin ella, alterna
+ *   POST   inventarios/producto/enPaginaWebProducto/{id}    { en_paginaweb? }; sin ella, alterna
  *   DELETE inventarios/producto/deleteProducto/{id}
  *
  *   GET    inventarios/producto/imagenes/{id}                la galería de un producto
@@ -120,11 +123,18 @@ class ProductoController extends Controller
 
     private const CASTS_AUDIT = '?::BIGINT, ?::VARCHAR, ?::VARCHAR, ?::INET, ?::TEXT, ?::UUID';
 
-    /** Los veintiún datos de la ficha, con sus castes, en el orden de las funciones. */
+    /** Los veinte datos de la ficha, con sus castes, en el orden de las funciones. */
     private const CASTS_DATOS = '
         ?::VARCHAR,   -- p_codigo
         ?::VARCHAR,   -- p_nombre
         ?::VARCHAR,   -- p_codigo_barras
+        -- Los tres códigos alternos: la referencia con la que cada proveedor
+        -- llama a este mismo producto. Van aquí, pegados a los otros códigos,
+        -- y este orden es el de las funciones: si se mueve uno hay que mover
+        -- también el de parametros().
+        ?::VARCHAR,   -- p_codigo2
+        ?::VARCHAR,   -- p_codigo3
+        ?::VARCHAR,   -- p_codigo4
         ?::TEXT,      -- p_descripcion
         ?::BIGINT,    -- p_marca_id
         ?::BIGINT,    -- p_categoria_id
@@ -138,10 +148,6 @@ class ProductoController extends Controller
         ?::NUMERIC,   -- p_stock_maximo
         ?::BOOLEAN,   -- p_maneja_serie
         ?::INTEGER,   -- p_garantia_meses
-        ?::NUMERIC,   -- p_peso_kg
-        ?::NUMERIC,   -- p_alto_cm
-        ?::NUMERIC,   -- p_ancho_cm
-        ?::NUMERIC,   -- p_profundidad_cm
         ?::BOOLEAN,   -- p_activo
     ';
 
@@ -173,6 +179,11 @@ class ProductoController extends Controller
             'codigo'         => 'required|string|min:2|max:30',
             'nombre'         => 'required|string|min:3|max:150',
             'codigo_barras'  => 'nullable|string|max:50',
+            // Los del proveedor. Sin unicidad a propósito: dos proveedores
+            // distintos pueden usar la misma referencia para cosas distintas.
+            'codigo2'        => 'nullable|string|max:50',
+            'codigo3'        => 'nullable|string|max:50',
+            'codigo4'        => 'nullable|string|max:50',
             // HTML desde el editor: las etiquetas ocupan, y la columna es
             // `text` sin límite propio
             'descripcion'    => 'nullable|string|max:20000',
@@ -182,6 +193,13 @@ class ProductoController extends Controller
             'unidad'         => 'nullable|string|max:15',
             'costo'          => 'nullable|numeric|min:0',
             'precio'         => 'nullable|numeric|min:0',
+            // Los tres que enseña la TIENDA en la tarjeta del producto. Vacíos
+            // quiere decir «no tiene»: sin precio anterior no se tacha nada,
+            // sin cuota no sale la celda del crédito directo, y sin precio de
+            // tarjeta se usa el precio normal.
+            'precio_anterior'       => 'nullable|numeric|min:0',
+            'precio_tarjeta'        => 'nullable|numeric|min:0',
+            'cuota_credito_directo' => 'nullable|numeric|min:0',
             // Sólo SI grava; la tarifa vendrá de las tablas de impuestos
             'impuesto'       => 'nullable|boolean',
             'maneja_stock'   => 'nullable|boolean',
@@ -189,11 +207,12 @@ class ProductoController extends Controller
             'stock_maximo'   => 'nullable|numeric|min:0',
             'maneja_serie'   => 'nullable|boolean',
             'garantia_meses' => 'nullable|integer|min:0|max:600',
-            'peso_kg'        => 'nullable|numeric|min:0',
-            'alto_cm'        => 'nullable|numeric|min:0',
-            'ancho_cm'       => 'nullable|numeric|min:0',
-            'profundidad_cm' => 'nullable|numeric|min:0',
             'activo'         => 'nullable|boolean',
+            // La palanca de la tienda web. APARTE de `activo`: `activo` dice
+            // si el producto se puede vender (local, caja, stock) y esto sólo
+            // si sale en internet. Así se puede esconder de la web algo que
+            // se sigue vendiendo en el mostrador, que antes era imposible.
+            'en_paginaweb'   => 'nullable|boolean',
             // Lo que se rellenó de la plantilla de la categoría:
             //   [{ caracteristica_id, nombre, valor, orden }, …]
             // Es opcional: una categoría puede no tener plantilla.
@@ -247,12 +266,63 @@ class ProductoController extends Controller
     }
 
     /** Los datos de la ficha en el orden de las funciones. */
+    /**
+     * Lo de la tienda, que va DETRÁS de los datos de auditoría.
+     *
+     * Se añadió al final de las funciones de la base a propósito: así lo que
+     * ya las llamaba sin ello sigue funcionando. Por eso no está en
+     * parametros(), que es el bloque de en medio.
+     *
+     * `en_paginaweb` NACE ENCENDIDO cuando no viene, igual que `activo`: un
+     * producto nuevo se publica, y para esconderlo de la web hay que apagarlo
+     * a mano. Al revés se olvidaría siempre.
+     */
+    /**
+     * Tira las cachés de la tienda web.
+     *
+     * HACE FALTA PORQUE LA TIENDA NO PREGUNTA CADA VEZ: los escaparates se
+     * guardan 10 minutos (`ecommerce.secciones.publicas`) y las páginas 1
+     * minuto. Sin esto, apagar un producto en el CRM se vería en la web
+     * «cuando toque», que es lo peor que puede pasar: parece que no funcionó.
+     *
+     * Se llama también al crear y al editar, no sólo al apagar: la tarjeta de
+     * un escaparate enseña el nombre, la foto y los precios del producto, así
+     * que cambiarle cualquiera de ésos deja la caché vieja igual de mal.
+     *
+     * NO TUMBA LA PANTALLA SI FALLA. Una caché que no se pudo limpiar es un
+     * producto que tarda un minuto en verse; un error aquí sería un producto
+     * que no se guardó.
+     */
+    private function refrescarLaTienda(): void
+    {
+        try {
+            SeccionPublicaController::limpiar();
+            InicioPublicoController::limpiar();
+        } catch (Exception $e) {
+            sistemaLog('warning', 'No se pudieron limpiar las cachés de la tienda',
+                       ['message' => $e->getMessage()]);
+        }
+    }
+
+    private function colaDeLaTienda(array $d): array
+    {
+        return [
+            $this->num($d['precio_anterior'] ?? null),
+            $this->num($d['precio_tarjeta'] ?? null),
+            $this->num($d['cuota_credito_directo'] ?? null),
+            array_key_exists('en_paginaweb', $d) ? (bool) $d['en_paginaweb'] : true,
+        ];
+    }
+
     private function parametros(array $d): array
     {
         return [
             $d['codigo'],
             $d['nombre'],
             $this->num($d['codigo_barras'] ?? null),
+            $this->num($d['codigo2'] ?? null),
+            $this->num($d['codigo3'] ?? null),
+            $this->num($d['codigo4'] ?? null),
             $this->num($d['descripcion'] ?? null),
             $this->num($d['marca_id'] ?? null),
             $this->num($d['categoria_id'] ?? null),
@@ -266,10 +336,6 @@ class ProductoController extends Controller
             $this->num($d['stock_maximo'] ?? null),
             array_key_exists('maneja_serie', $d) ? (bool) $d['maneja_serie'] : false,
             $this->num($d['garantia_meses'] ?? null) ?? 0,
-            $this->num($d['peso_kg'] ?? null),
-            $this->num($d['alto_cm'] ?? null),
-            $this->num($d['ancho_cm'] ?? null),
-            $this->num($d['profundidad_cm'] ?? null),
             array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
         ];
     }
@@ -289,8 +355,28 @@ class ProductoController extends Controller
     public function allProductos(Request $request)
     {
         try {
-            $marca     = $request->input('marca_id');
-            $categoria = $request->input('categoria_id');
+            // Varias marcas a la vez: llegan como «3,7,11». Se limpia a
+            // conciencia porque esto acaba en un literal de array de
+            // PostgreSQL: sólo enteros positivos, sin repetidos.
+            $marcas = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('marca_ids', ''))),
+                fn ($id) => $id > 0
+            )));
+            // Las categorías, igual: llegan como «12,48». El árbol de la
+            // izquierda mete UNA y el panel de la derecha deja elegir varias;
+            // es el mismo filtro con dos mandos.
+            $categorias = array_values(array_unique(array_filter(
+                array_map('intval', explode(',', (string) $request->input('categoria_ids', ''))),
+                fn ($id) => $id > 0
+            )));
+
+            // Los rangos. Abiertos por los dos lados: null en un extremo es
+            // «sin tope por ahí». Lo que no sea un número se ignora.
+            $num = fn ($v) => (is_numeric($v) ? (float) $v : null);
+            $precioMin = $num($request->input('precio_min'));
+            $precioMax = $num($request->input('precio_max'));
+            $costoMin  = $num($request->input('costo_min'));
+            $costoMax  = $num($request->input('costo_max'));
 
             // Los filtros de la cabecera de la rejilla. Se aplican AQUÍ y no
             // en el navegador: la pantalla pagina, así que ag-Grid sólo tiene
@@ -298,13 +384,16 @@ class ProductoController extends Controller
             $filtros = $this->filtrosDeColumna($request->input('filtros'), self::COLUMNAS_FILTRABLES);
 
             $result = DB::selectOne(
-                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT, ?::BIGINT, ?::JSONB) as result',
+                'SELECT inventarios.fn_productos_listar_paginado(?::INTEGER, ?::INTEGER, ?::TEXT, ?::BIGINT[], ?::BIGINT[], ?::JSONB, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::NUMERIC) as result',
                 [(int) $request->input('page', 1),
                  (int) $request->input('per_page', 15),
                  (string) $request->input('search', ''),
-                 ($marca === null || $marca === '') ? null : (int) $marca,
-                 ($categoria === null || $categoria === '') ? null : (int) $categoria,
-                 json_encode((object) $filtros)]
+                 // Sin marcas se manda NULL, no «{}»: los dos significan
+                 // «todas» para la función, pero NULL se lee mejor en el log.
+                 $marcas ? '{' . implode(',', $marcas) . '}' : null,
+                 $categorias ? '{' . implode(',', $categorias) . '}' : null,
+                 json_encode((object) $filtros),
+                 $precioMin, $precioMax, $costoMin, $costoMax]
             );
             $r = json_decode($result->result, true);
 
@@ -366,14 +455,17 @@ class ProductoController extends Controller
             // segundo falla, lo primero tampoco se queda.
             $r = DB::transaction(function () use ($request, $d) {
                 $result = DB::selectOne(
-                    'SELECT inventarios.fn_productos_crear(' . self::CASTS_DATOS . self::CASTS_AUDIT . ') as result',
-                    array_merge($this->parametros($d), $this->auditoria($request))
+                    'SELECT inventarios.fn_productos_crear(' . self::CASTS_DATOS . self::CASTS_AUDIT
+                    . ', ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::BOOLEAN) as result',
+                    array_merge($this->parametros($d), $this->auditoria($request), $this->colaDeLaTienda($d))
                 );
                 $r = json_decode($result->result, true);
 
                 $this->guardarCaracteristicas($request, (int) $r['data']['id'], $d);
                 return $r;
             });
+
+            $this->refrescarLaTienda();
 
             sistemaLog('info', 'Producto creado', ['producto_id' => $r['data']['id'] ?? null, 'codigo' => $r['data']['codigo'] ?? null]);
             return $this->successResponse($r['data'], $r['message']);
@@ -400,14 +492,17 @@ class ProductoController extends Controller
 
             $r = DB::transaction(function () use ($request, $id, $d) {
                 $result = DB::selectOne(
-                    'SELECT inventarios.fn_productos_modificar(?::BIGINT, ' . self::CASTS_DATOS . self::CASTS_AUDIT . ') as result',
-                    array_merge([(int) $id], $this->parametros($d), $this->auditoria($request))
+                    'SELECT inventarios.fn_productos_modificar(?::BIGINT, ' . self::CASTS_DATOS . self::CASTS_AUDIT
+                    . ', ?::NUMERIC, ?::NUMERIC, ?::NUMERIC, ?::BOOLEAN) as result',
+                    array_merge([(int) $id], $this->parametros($d), $this->auditoria($request), $this->colaDeLaTienda($d))
                 );
                 $r = json_decode($result->result, true);
 
                 $this->guardarCaracteristicas($request, (int) $id, $d);
                 return $r;
             });
+
+            $this->refrescarLaTienda();
 
             sistemaLog('info', 'Producto actualizado', ['producto_id' => $id]);
             return $this->successResponse($r['data'], $r['message']);
@@ -441,12 +536,55 @@ class ProductoController extends Controller
                 return $this->errorResponse($r['message'], ($r['error_code'] ?? '') === 'NO_EXISTE' ? 404 : 500);
             }
 
+            // También aquí: `activo` apagado lo quita igualmente de la tienda
+            $this->refrescarLaTienda();
+
             sistemaLog('info', 'Producto activado/desactivado', ['producto_id' => $id, 'activo' => $r['data']['activo'] ?? null]);
             return $this->successResponse($r['data'], $r['message']);
 
         } catch (Exception $e) {
             sistemaLog('error', 'Error en activarProducto', ['message' => $e->getMessage(), 'line' => $e->getLine(), 'producto_id' => $id]);
             return $this->errorResponse('Ocurrió un error al cambiar el estado del producto', 500);
+        }
+    }
+
+    /**
+     * Publica o esconde un producto en la tienda web, sin tocar `activo`.
+     *
+     * Es la hermana de activarProducto y funciona igual: sin `en_paginaweb` en
+     * la petición, alterna. La rejilla la usa de las dos maneras —de un clic
+     * en la casilla, y con el valor puesto para marcar en lote—.
+     */
+    public function enPaginaWebProducto(Request $request, $id)
+    {
+        try {
+            // El booleano con filter_var: "false" en texto es true a secas
+            $enWeb = $request->exists('en_paginaweb')
+                     && $request->input('en_paginaweb') !== null
+                     && $request->input('en_paginaweb') !== ''
+                ? filter_var($request->input('en_paginaweb'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE)
+                : null;
+
+            $result = DB::selectOne(
+                'SELECT inventarios.fn_productos_en_paginaweb(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $enWeb], $this->auditoria($request))
+            );
+            $r = json_decode($result->result, true);
+
+            if (!($r['success'] ?? false)) {
+                return $this->errorResponse($r['message'], ($r['error_code'] ?? '') === 'NO_EXISTE' ? 404 : 500);
+            }
+
+            $this->refrescarLaTienda();
+
+            sistemaLog('info', 'Producto publicado/escondido en la web',
+                       ['producto_id' => $id, 'en_paginaweb' => $r['data']['en_paginaweb'] ?? null]);
+            return $this->successResponse($r['data'], $r['message']);
+
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error en enPaginaWebProducto',
+                       ['message' => $e->getMessage(), 'line' => $e->getLine(), 'producto_id' => $id]);
+            return $this->errorResponse('Ocurrió un error al cambiar la publicación en la web', 500);
         }
     }
 
@@ -468,6 +606,9 @@ class ProductoController extends Controller
 
             // Las imágenes se quedan: el producto va a la papelera y puede
             // volver con ellas. Se borran en eliminarDefinitivo / vaciarPapelera.
+            // A la papelera también se va de la tienda
+            $this->refrescarLaTienda();
+
             sistemaLog('info', 'Producto enviado a la papelera', ['producto_id' => $id]);
             return $this->successResponse($r['data'], $r['message']);
 

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba de iconos</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0 14px 40px;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      color: #111;
+      background: #fff;
+    }
+
+    h1 { font-size: 17px; margin: 14px 0 2px; }
+    h2 { font-size: 14px; margin: 18px 0 6px; }
+    p.nota { margin: 0 0 10px; color: #666; font-size: 12px; }
+
+    /* ===== 1. Una barra PEGAJOSA, como el encabezado de la tienda ===== */
+    .barra {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 -14px 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid #ddd;
+      background: #fff;
+    }
+
+    .boton {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border: 1px solid #ddd;
+      border-radius: 50%;
+      font-size: 20px;
+      color: #111;
+      background: #f2f2f2;
+    }
+
+    .fila { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .caja {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      width: 62px;
+      padding: 7px 2px;
+      border: 1px dashed #c00;
+      border-radius: 6px;
+      font-size: 10px;
+      color: #666;
+      text-align: center;
+    }
+
+    /* Lo mismo que hace la tienda */
+    .ae-icono {
+      display: inline-block;
+      flex-shrink: 0;
+      width: 1em;
+      height: 1em;
+      line-height: 1;
+      font-size: 22px;
+      color: #111;
+    }
+
+    .ae-icono svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+    pre {
+      margin: 0;
+      padding: 9px;
+      border-radius: 6px;
+      background: #f4f4f4;
+      font: 11.5px/1.4 ui-monospace, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .relleno { height: 700px; }
+  </style>
+</head>
+
+<body>
+  <div class="barra" id="barra">
+    <span class="boton" id="b-menu"></span>
+    <span class="boton" id="b-usuario"></span>
+    <span class="boton" id="b-buscar"></span>
+    <span class="boton" id="b-carrito"></span>
+    <strong style="font-size:12px">PEGAJOSA</strong>
+  </div>
+
+  <h1>Prueba de iconos</h1>
+  <p class="nota">1) Mira la barra de arriba. 2) Baja hasta el final. 3) Vuelve a subir y mira otra vez
+    la barra. Saca captura de esta pantalla y del final.</p>
+
+  <h2>1. Normales, metidos con innerHTML</h2>
+  <div class="fila" id="conInner"></div>
+
+  <h2>2. Escritos a mano en la página</h2>
+  <div class="fila" id="aMano"></div>
+
+  <h2>3. Lo que mide cada uno</h2>
+  <pre id="medidas">…</pre>
+
+  <h2>4. Qué trae este navegador</h2>
+  <pre id="soporte">…</pre>
+
+  <h2>5. Errores</h2>
+  <pre id="errores">ninguno</pre>
+
+  <div class="relleno"></div>
+  <h2>Has llegado al final</h2>
+  <p class="nota">Sube otra vez y mira si los iconos de la barra PEGAJOSA siguen ahí.</p>
+
+  <script>
+    (function () {
+      var errores = [];
+      window.onerror = function (m) { errores.push(String(m)); pinta(); };
+      function pinta() {
+        document.getElementById('errores').textContent = errores.length ? errores.join('\n') : 'ninguno';
+      }
+
+      var ICONOS = {
+        menu: { t: 't', c: '<path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/>' },
+        usuario: { t: 't', c: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>' },
+        buscar: { t: 't', c: '<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>' },
+        carrito: { t: 't', c: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>' },
+        chevron: { t: 't', c: '<path d="m15 18-6-6 6-6"/>' },
+        whatsapp: { t: 'r', c: '<path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.46 1.32 4.96L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Z"/>' }
+      };
+
+      var TRAZO = 'stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"';
+      var ATRIBUTOS = {
+        t: 'fill="none" ' + TRAZO + ' stroke-width="2"',
+        r: 'fill="currentColor"'
+      };
+
+      function svgDe(n) {
+        var i = ICONOS[n];
+        return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ' + ATRIBUTOS[i.t]
+          + ' focusable="false">' + i.c + '</svg>';
+      }
+
+      var nombres = ['menu', 'usuario', 'buscar', 'carrito', 'chevron', 'whatsapp'];
+
+      // La barra pegajosa: los cuatro del encabezado, metidos con innerHTML
+      ['menu', 'usuario', 'buscar', 'carrito'].forEach(function (n) {
+        var caja = document.getElementById('b-' + n);
+        var hueco = document.createElement('span');
+        hueco.className = 'ae-icono';
+        hueco.id = 'barra-' + n;
+        caja.appendChild(hueco);
+        try { hueco.innerHTML = svgDe(n); } catch (e) { errores.push('barra ' + n + ': ' + e.message); }
+      });
+
+      // Los normales, con innerHTML
+      var conInner = document.getElementById('conInner');
+      nombres.forEach(function (n) {
+        var caja = document.createElement('span');
+        caja.className = 'caja';
+        var hueco = document.createElement('span');
+        hueco.className = 'ae-icono';
+        hueco.id = 'inner-' + n;
+        caja.appendChild(hueco);
+        caja.appendChild(document.createTextNode(n));
+        conInner.appendChild(caja);
+        try { hueco.innerHTML = svgDe(n); } catch (e) { errores.push(n + ': ' + e.message); }
+      });
+
+      // Los mismos, escritos tal cual
+      document.getElementById('aMano').innerHTML = nombres.map(function (n) {
+        return '<span class="caja"><span class="ae-icono">' + svgDe(n) + '</span>' + n + '</span>';
+      }).join('');
+
+      // Medidas
+      function medir(id, etiqueta) {
+        var hueco = document.getElementById(id);
+        if (!hueco) { return etiqueta + ' no está'; }
+        var svg = hueco.querySelector('svg');
+        var r = svg ? svg.getBoundingClientRect() : null;
+        return (etiqueta + '            ').slice(0, 14)
+          + ' svg:' + (svg ? 'si' : 'NO')
+          + '  tam:' + (r ? Math.round(r.width) + 'x' + Math.round(r.height) : '-')
+          + '  ns:' + (svg ? (svg.namespaceURI === 'http://www.w3.org/2000/svg' ? 'ok' : 'MAL') : '-');
+      }
+      var lineas = ['menu', 'usuario', 'buscar', 'carrito'].map(function (n) {
+        return medir('barra-' + n, 'barra/' + n);
+      }).concat(nombres.map(function (n) { return medir('inner-' + n, 'normal/' + n); }));
+      document.getElementById('medidas').textContent = lineas.join('\n');
+
+      // Soporte
+      function di(ok) { return ok ? 'si' : 'NO'; }
+      var s = [];
+      s.push(navigator.userAgent);
+      s.push('');
+      s.push('Object.hasOwn ... ' + di(typeof Object.hasOwn === 'function') + '  (Safari 15.4)');
+      s.push('Array.at ........ ' + di(typeof Array.prototype.at === 'function') + '  (Safari 15.4)');
+      s.push('CSS :has() ...... ' + di(!!(window.CSS && CSS.supports && CSS.supports('selector(:has(a))'))));
+      s.push('pantalla ........ ' + window.innerWidth + 'x' + window.innerHeight + ' dpr' + window.devicePixelRatio);
+      document.getElementById('soporte').textContent = s.join('\n');
+
+      pinta();
+    })();
+  </script>
+</body>
+
+</html>
