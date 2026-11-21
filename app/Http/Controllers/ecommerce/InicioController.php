@@ -255,6 +255,9 @@ class InicioController extends Controller
                 'etiqueta_texto'       => 'nullable|string|max:7',
                 'tarjeta_fondo_color'  => 'nullable|string|max:7',
                 'tarjeta_borde_color'  => 'nullable|string|max:7',
+                // Y cuánta sombra lleva la tarjeta. Una clave, no una medida:
+                // los píxeles los pone la tienda. La lista la tiene la base.
+                'tarjeta_sombra'       => 'nullable|string|max:10',
                 // Cómo se enseña la sección y qué hace la imagen de al lado.
                 // El FICHERO no está aquí: va por imagenSeccion().
                 'disposicion'          => 'nullable|string|max:12',

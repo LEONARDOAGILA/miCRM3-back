@@ -339,8 +339,17 @@ Route::group([
     'prefix' => 'encabezado', 'middleware' => ['jwt.auth', 'usuario.activo']
 ], function () {
 
-    Route::get('getEncabezado',   [EncabezadoController::class, 'getEncabezado']);   // config + menú
-    Route::post('editEncabezado', [EncabezadoController::class, 'editEncabezado']);  // { config }
+    // CUÁL de los encabezados, con ?encabezado_id=; sin él, el predeterminado
+    Route::get('getEncabezado',   [EncabezadoController::class, 'getEncabezado']);   // config + menú + todos
+    Route::post('editEncabezado', [EncabezadoController::class, 'editEncabezado']);  // { encabezado_id?, config }
+
+    // Los encabezados de campaña: uno por temporada, con sus fechas. El
+    // predeterminado no se apaga ni se borra (lo impide la base)
+    Route::post('addEncabezado',            [EncabezadoController::class, 'addEncabezado']);                        // { nombre, copiar_de? }
+    Route::post('editDatos/{id}',           [EncabezadoController::class, 'editDatos'])->whereNumber('id');         // { nombre, desde?, hasta?, activo? }
+    Route::post('activarEncabezado/{id}',   [EncabezadoController::class, 'activarEncabezado'])->whereNumber('id'); // { activo? }; sin ella, alterna
+    Route::post('predeterminado/{id}',      [EncabezadoController::class, 'predeterminado'])->whereNumber('id');
+    Route::delete('deleteEncabezado/{id}',  [EncabezadoController::class, 'deleteEncabezado'])->whereNumber('id');
 
     // El logo: va aparte de la configuración porque aquélla reescribe el
     // config entero y se lo llevaría por delante

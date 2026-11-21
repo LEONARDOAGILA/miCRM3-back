@@ -112,6 +112,15 @@ class EncabezadoController extends Controller
         // aquí, como con el resto de imágenes del ecommerce
         if (isset($r['data']) && is_array($r['data'])) {
             $r['data']['logo_url'] = $this->urlImagenEcommerce($r['data']['logo'] ?? null);
+
+            // Y la de cada uno de la lista: la pantalla los enseña en fila con
+            // su logo, y sin dirección saldrían todos con el hueco gris
+            if (isset($r['data']['encabezados']) && is_array($r['data']['encabezados'])) {
+                foreach ($r['data']['encabezados'] as &$uno) {
+                    $uno['logo_url'] = $this->urlImagenEcommerce($uno['logo'] ?? null);
+                }
+                unset($uno);
+            }
         }
 
         // Lo que ve la tienda esta en cache: si no se tira aqui, el cambio
@@ -144,8 +153,8 @@ class EncabezadoController extends Controller
 
             try {
                 $result = DB::selectOne(
-                    'SELECT ecommerce.fn_encabezado_logo(?::TEXT, ' . self::CASTS_AUDIT . ') as result',
-                    array_merge([$nuevo], $this->auditoria($request))
+                    'SELECT ecommerce.fn_encabezado_logo(?::BIGINT, ?::TEXT, ' . self::CASTS_AUDIT . ') as result',
+                    array_merge([$this->cualPiden($request), $nuevo], $this->auditoria($request))
                 );
             } catch (QueryException $e) {
                 // La fila no llegó a guardarse: el fichero recién subido se
@@ -171,8 +180,8 @@ class EncabezadoController extends Controller
     {
         try {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_encabezado_logo(?::TEXT, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([null], $this->auditoria($request))
+                'SELECT ecommerce.fn_encabezado_logo(?::BIGINT, ?::TEXT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([$this->cualPiden($request), null], $this->auditoria($request))
             );
 
             sistemaLog('info', 'Logo del encabezado quitado');
@@ -203,13 +212,195 @@ class EncabezadoController extends Controller
     }
 
     // ================================================================
+    // LOS ENCABEZADOS: UNO POR CAMPAÑA
+    // ================================================================
+    //
+    // Hay los que hagan falta, cada uno con su nombre y sus fechas, y uno
+    // marcado como PREDETERMINADO: el que se ve cuando no hay ninguna campaña
+    // en fecha. Ése no se apaga ni se borra —la base lo impide—, sólo se
+    // cambia por otro.
+    //
+    // El MENÚ no cuelga de ninguno: es uno solo y vale para todos. Lo que
+    // tiene fechas ahí es cada enlace.
+
+    /** Uno nuevo, copiando la pinta de otro (el predeterminado si no se dice). */
+    public function addEncabezado(Request $request)
+    {
+        try {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, [
+                'nombre'    => 'required|string|max:60',
+                'copiar_de' => 'nullable|integer',
+            ], [
+                'nombre.required' => 'Ponle un nombre al encabezado',
+                'nombre.max'      => 'El nombre no puede superar los 60 caracteres',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezados_crear(?::TEXT, ?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([$d['nombre'], $d['copiar_de'] ?? null], $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Encabezado creado', ['nombre' => $d['nombre']]);
+            return $this->responder($result);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al crear el encabezado', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Su nombre y sus fechas. La pinta va por editEncabezado. */
+    public function editDatos(Request $request, $id)
+    {
+        try {
+            $d = $this->datosDe($request);
+
+            $validator = Validator::make($d, [
+                'nombre' => 'required|string|max:60',
+                'desde'  => 'nullable|string|max:30',
+                'hasta'  => 'nullable|string|max:30',
+                'activo' => 'nullable|boolean',
+            ], [
+                'nombre.required' => 'Ponle un nombre al encabezado',
+            ]);
+            if ($validator->fails()) {
+                return $this->errorResponse($validator->errors()->first(), 422);
+            }
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezados_guardar(?::BIGINT, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, json_encode([
+                    'nombre' => $d['nombre'],
+                    'desde'  => $this->fechaONada($d['desde'] ?? null),
+                    'hasta'  => $this->fechaONada($d['hasta'] ?? null),
+                    'activo' => array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
+                ])], $this->auditoria($request))
+            );
+
+            return $this->responder($result);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al guardar el encabezado', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Encenderlo o apagarlo. Sin «activo», alterna. */
+    public function activarEncabezado(Request $request, $id)
+    {
+        try {
+            $d = $this->datosDe($request);
+            $activo = array_key_exists('activo', $d) && $d['activo'] !== null
+                ? filter_var($d['activo'], FILTER_VALIDATE_BOOLEAN) : null;
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezados_activar(?::BIGINT, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id, $activo], $this->auditoria($request))
+            );
+
+            return $this->responder($result);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al activar el encabezado', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Éste pasa a ser el predeterminado (y se enciende). */
+    public function predeterminado(Request $request, $id)
+    {
+        try {
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezados_principal(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id], $this->auditoria($request))
+            );
+
+            sistemaLog('info', 'Encabezado predeterminado cambiado', ['id' => (int) $id]);
+            return $this->responder($result);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al cambiar el predeterminado', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Borrarlo. El predeterminado no, y su logo se borra del disco. */
+    public function deleteEncabezado(Request $request, $id)
+    {
+        try {
+            $logo = DB::selectOne(
+                'SELECT logo FROM ecommerce.encabezado WHERE id = ?::BIGINT', [(int) $id])->logo ?? null;
+
+            $result = DB::selectOne(
+                'SELECT ecommerce.fn_encabezados_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $id], $this->auditoria($request))
+            );
+
+            // El fichero ya no lo mira nadie: cada encabezado tiene el suyo
+            if ($logo) {
+                $this->borrarImagenEcommerce($logo);
+            }
+
+            sistemaLog('info', 'Encabezado borrado', ['id' => (int) $id]);
+            return $this->responder($result);
+
+        } catch (QueryException $e) {
+            [$m, $c] = $this->traducirErrorPostgres($e);
+            return $this->errorResponse($m, $c);
+        } catch (Exception $e) {
+            sistemaLog('error', 'Error al borrar el encabezado', ['message' => $e->getMessage()]);
+            return $this->errorResponse($e->getMessage(), 500);
+        }
+    }
+
+    /** Una fecha del formulario, o null si viene vacía. */
+    private function fechaONada($valor): ?string
+    {
+        $v = is_string($valor) ? trim($valor) : '';
+        return $v === '' ? null : $v;
+    }
+
+    // ================================================================
     // CONFIGURACIÓN
     // ================================================================
 
-    public function getEncabezado()
+    /**
+     * CUÁL de los encabezados se está tocando.
+     *
+     * Sin él, el PREDETERMINADO, que es el que abre la pantalla: así las
+     * llamadas de siempre —las que no sabían que iba a haber varios— siguen
+     * valiendo y apuntan al mismo sitio de antes.
+     */
+    private function cualPiden(Request $request): ?int
+    {
+        $d = $this->datosDe($request);
+        $id = $d['encabezado_id'] ?? $request->query('encabezado_id') ?? $request->query('id');
+
+        return ($id === null || $id === '') ? null : (int) $id;
+    }
+
+    public function getEncabezado(Request $request)
     {
         try {
-            return $this->responder(DB::selectOne('SELECT ecommerce.fn_encabezado_obtener() as result'));
+            return $this->responder(DB::selectOne(
+                'SELECT ecommerce.fn_encabezado_obtener(?::BIGINT) as result', [$this->cualPiden($request)]));
         } catch (Exception $e) {
             sistemaLog('error', 'Error en getEncabezado', ['message' => $e->getMessage()]);
             return $this->errorResponse($e->getMessage(), 500);
@@ -225,8 +416,8 @@ class EncabezadoController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_encabezado_modificar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([json_encode($d['config'])], $this->auditoria($request))
+                'SELECT ecommerce.fn_encabezado_modificar(?::BIGINT, ?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                array_merge([$this->cualPiden($request), json_encode($d['config'])], $this->auditoria($request))
             );
 
             sistemaLog('info', 'Encabezado de la tienda modificado');
@@ -269,6 +460,10 @@ class EncabezadoController extends Controller
                 // Píldora al final de la barra roja. La base lo apaga sola si
                 // el enlace cuelga de un desplegable o si abre uno.
                 'destacado'     => 'nullable|boolean',
+                // ENTRE QUÉ FECHAS SALE EN EL MENÚ: «Regalos» del 1 de diciembre
+                // al 6 de enero, y se apaga solo. Vacías, sale siempre
+                'desde'         => 'nullable|string|max:30',
+                'hasta'         => 'nullable|string|max:30',
             ], [
                 'texto.required' => 'El texto del enlace es obligatorio',
                 'texto.max'      => 'El texto no puede superar los 60 caracteres',
@@ -280,7 +475,8 @@ class EncabezadoController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_encabezado_enlaces_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, '
-                . '?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN, ' . self::CASTS_AUDIT . ') as result',
+                . '?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN, ?::TIMESTAMPTZ, ?::TIMESTAMPTZ, '
+                . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $id,
                     // Al modificar, el padre lo decide la base (no se cambia aquí)
@@ -291,6 +487,8 @@ class EncabezadoController extends Controller
                     array_key_exists('activo', $d) ? (bool) $d['activo'] : true,
                     array_key_exists('nueva_pestana', $d) ? (bool) $d['nueva_pestana'] : null,
                     array_key_exists('destacado', $d) ? (bool) $d['destacado'] : false,
+                    $this->fechaONada($d['desde'] ?? null),
+                    $this->fechaONada($d['hasta'] ?? null),
                 ], $this->auditoria($request))
             );
 
