@@ -19,7 +19,7 @@ use App\Http\Controllers\ecommerce\PaginaInformativaController;
 use App\Http\Controllers\ecommerce\PaginaInformativaPublicoController;
 use App\Http\Controllers\ecommerce\PiePaginaController;
 use App\Http\Controllers\ecommerce\ProductoPublicoController;
-use App\Http\Controllers\ecommerce\ProductoSeccionController;
+use App\Http\Controllers\ecommerce\GrupoProductosController;
 use App\Http\Controllers\ecommerce\ResumenController;
 use App\Http\Controllers\ecommerce\SeccionPublicaController;
 
@@ -246,11 +246,11 @@ Route::group([
     Route::delete('deleteBanner/{id}',     [InicioController::class, 'deleteBanner'])
          ->whereNumber('id');
 
-    // Los escaparates de «Productos por sección» se pueden enseñar en VARIAS
+    // Los escaparates de «Grupos de productos» se pueden enseñar en VARIAS
     // páginas: aquí se añade uno a ésta y se quita de ésta. Quitarlo no lo
     // borra; sus productos siguen en su pantalla.
     Route::get('escaparatesDisponibles',   [InicioController::class, 'escaparatesDisponibles']); // ?cuerpo_id=
-    Route::post('addEscaparate',           [InicioController::class, 'addEscaparate']);  // { seccion_id, cuerpo_id? }
+    Route::post('addEscaparate',           [InicioController::class, 'addEscaparate']);  // { grupo_id, cuerpo_id? }
     Route::delete('quitarEscaparate/{id}', [InicioController::class, 'quitarEscaparate'])
          ->whereNumber('id');
 
@@ -356,18 +356,23 @@ Route::group([
     Route::post('logo',           [EncabezadoController::class, 'logo']);            // { logo: fichero }
     Route::delete('logo',         [EncabezadoController::class, 'quitarLogo']);      // vuelve al de la tienda
 
-    Route::post('addEnlace',           [EncabezadoController::class, 'addEnlace']);                        // { padre_id?, texto, … }
+    // EL MENÚ ES DE CADA ENCABEZADO: las que crean, reordenan o vacían
+    // llevan `encabezado_id`; sin él se entiende el predeterminado. Las que
+    // van por id de enlace no lo necesitan: la fila ya dice de cuál es.
+    Route::post('addEnlace',           [EncabezadoController::class, 'addEnlace']);                        // { encabezado_id?, padre_id?, texto, … }
     Route::post('editEnlace/{id}',     [EncabezadoController::class, 'editEnlace'])->whereNumber('id');
     Route::post('activarEnlace/{id}',  [EncabezadoController::class, 'activarEnlace'])->whereNumber('id'); // { activo? }; sin ella, alterna
-    Route::post('ordenarEnlaces',      [EncabezadoController::class, 'ordenarEnlaces']);                   // { ids: [...] }
+    Route::post('ordenarEnlaces',      [EncabezadoController::class, 'ordenarEnlaces']);                   // { encabezado_id?, ids: [...] }
     // El arrastre de la rejilla: cambia de padre y de sitio a la vez. El menú
     // no tiene límite de niveles; lo único que no se admite es un ciclo
     Route::post('moverEnlace/{id}',    [EncabezadoController::class, 'moverEnlace'])->whereNumber('id');   // { padre_id?, antes_de? }
     Route::delete('deleteEnlace/{id}', [EncabezadoController::class, 'deleteEnlace'])->whereNumber('id');  // se lleva su rama
 
-    Route::get('papelera',          [EncabezadoController::class, 'papelera']);
-    Route::post('restaurar',        [EncabezadoController::class, 'restaurar']);      // { ids: [...] }
-    Route::delete('vaciarPapelera', [EncabezadoController::class, 'vaciarPapelera']); // permiso «vaciar»
+    // Y LA PAPELERA TAMBIÉN ES DE CADA UNO: lo que se borró del menú de
+    // Navidad no asoma en la del de siempre
+    Route::get('papelera',          [EncabezadoController::class, 'papelera']);        // ?encabezado_id=
+    Route::post('restaurar',        [EncabezadoController::class, 'restaurar']);      // { encabezado_id?, ids: [...] }
+    Route::delete('vaciarPapelera', [EncabezadoController::class, 'vaciarPapelera']); // ?encabezado_id=; permiso «vaciar»
 });
 
 // ----------------------------------------------------------------------------
@@ -444,27 +449,27 @@ Route::group([
 // sólo tiene la página que está viendo, y los 340 que cumplen el filtro los
 // resuelve la base con esa misma función de listado.
 Route::group([
-    'prefix' => 'productoSeccion', 'middleware' => ['jwt.auth', 'usuario.activo']
+    'prefix' => 'grupoProductos', 'middleware' => ['jwt.auth', 'usuario.activo']
 ], function () {
 
-    Route::get('allSecciones',          [ProductoSeccionController::class, 'allSecciones']);
-    Route::post('addSeccion',           [ProductoSeccionController::class, 'addSeccion']);                       // { nombre, desde?, hasta? }
-    Route::post('editSeccion/{id}',     [ProductoSeccionController::class, 'editSeccion'])->whereNumber('id');
-    Route::post('activarSeccion/{id}',  [ProductoSeccionController::class, 'activarSeccion'])->whereNumber('id'); // { activo? }; sin ella, alterna
-    Route::post('ordenarSecciones',     [ProductoSeccionController::class, 'ordenarSecciones']);                  // { ids: [...] }
-    Route::delete('deleteSeccion/{id}', [ProductoSeccionController::class, 'deleteSeccion'])->whereNumber('id');  // a la papelera
+    Route::get('allGrupos',           [GrupoProductosController::class, 'allGrupos']);
+    Route::post('addGrupo',           [GrupoProductosController::class, 'addGrupo']);                       // { nombre, desde?, hasta? }
+    Route::post('editGrupo/{id}',     [GrupoProductosController::class, 'editGrupo'])->whereNumber('id');
+    Route::post('activarGrupo/{id}',  [GrupoProductosController::class, 'activarGrupo'])->whereNumber('id'); // { activo? }; sin ella, alterna
+    Route::post('ordenarGrupos',      [GrupoProductosController::class, 'ordenarGrupos']);                  // { ids: [...] }
+    Route::delete('deleteGrupo/{id}', [GrupoProductosController::class, 'deleteGrupo'])->whereNumber('id');  // a la papelera
 
-    Route::get('papeleraSecciones',       [ProductoSeccionController::class, 'papeleraSecciones']);
-    Route::post('restaurarSeccion/{id}',  [ProductoSeccionController::class, 'restaurarSeccion'])->whereNumber('id');
+    Route::get('papeleraGrupos',      [GrupoProductosController::class, 'papeleraGrupos']);
+    Route::post('restaurarGrupo/{id}', [GrupoProductosController::class, 'restaurarGrupo'])->whereNumber('id');
 
     // Lo que lleva dentro. `productos` trae las fichas completas —las mismas
     // que el catálogo, para que la rejilla pinte igual las dos vistas— e
     // `ids` sólo los números, que es lo que necesita el catálogo para marcar
     // qué filas ya están dentro.
-    Route::get('productos/{id}',     [ProductoSeccionController::class, 'productos'])->whereNumber('id');
-    Route::get('ids/{id}',           [ProductoSeccionController::class, 'ids'])->whereNumber('id');
-    Route::post('agregar/{id}',      [ProductoSeccionController::class, 'agregar'])->whereNumber('id');       // { producto_ids: [...] }
-    Route::post('quitar/{id}',       [ProductoSeccionController::class, 'quitar'])->whereNumber('id');        // { producto_ids: [...] }
-    Route::post('ordenar/{id}',      [ProductoSeccionController::class, 'ordenar'])->whereNumber('id');       // { producto_ids: [...] }
-    Route::post('agregarFiltro/{id}', [ProductoSeccionController::class, 'agregarFiltro'])->whereNumber('id'); // { search?, marca_ids?, … }
+    Route::get('productos/{id}',     [GrupoProductosController::class, 'productos'])->whereNumber('id');
+    Route::get('ids/{id}',           [GrupoProductosController::class, 'ids'])->whereNumber('id');
+    Route::post('agregar/{id}',      [GrupoProductosController::class, 'agregar'])->whereNumber('id');       // { producto_ids: [...] }
+    Route::post('quitar/{id}',       [GrupoProductosController::class, 'quitar'])->whereNumber('id');        // { producto_ids: [...] }
+    Route::post('ordenar/{id}',      [GrupoProductosController::class, 'ordenar'])->whereNumber('id');       // { producto_ids: [...] }
+    Route::post('agregarFiltro/{id}', [GrupoProductosController::class, 'agregarFiltro'])->whereNumber('id'); // { search?, marca_ids?, … }
 });

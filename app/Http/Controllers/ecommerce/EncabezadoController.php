@@ -220,8 +220,11 @@ class EncabezadoController extends Controller
     // en fecha. Ése no se apaga ni se borra —la base lo impide—, sólo se
     // cambia por otro.
     //
-    // El MENÚ no cuelga de ninguno: es uno solo y vale para todos. Lo que
-    // tiene fechas ahí es cada enlace.
+    // Y CADA UNO LLEVA SU MENÚ: los enlaces cuelgan del encabezado, de modo
+    // que el de Navidad puede llevar «REGALOS» sin que asome el resto del
+    // año. Las llamadas del menú dicen de cuál se trata —`cualPiden`— y, si
+    // no lo dicen, se entiende el predeterminado. Crear un encabezado copia
+    // el menú del que se copia, y borrarlo se lleva el suyo.
 
     /** Uno nuevo, copiando la pinta de otro (el predeterminado si no se dice). */
     public function addEncabezado(Request $request)
@@ -451,6 +454,9 @@ class EncabezadoController extends Controller
     {
         try {
             $validator = Validator::make($this->datosDe($request), [
+                // DE QUÉ ENCABEZADO ES. Sin él, el predeterminado; si cuelga de
+                // otro enlace, manda el encabezado del padre
+                'encabezado_id' => 'nullable|integer',
                 'padre_id'      => 'nullable|integer',
                 'texto'         => 'required|string|max:60',
                 'enlace'        => 'nullable|string|max:250',
@@ -474,11 +480,14 @@ class EncabezadoController extends Controller
             $d = $validator->validated();
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_encabezado_enlaces_guardar(?::BIGINT, ?::BIGINT, ?::VARCHAR, ?::VARCHAR, '
-                . '?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN, ?::TIMESTAMPTZ, ?::TIMESTAMPTZ, '
-                . self::CASTS_AUDIT . ') as result',
+                'SELECT ecommerce.fn_encabezado_enlaces_guardar(?::BIGINT, ?::BIGINT, ?::BIGINT, '
+                . '?::VARCHAR, ?::VARCHAR, ?::VARCHAR, ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN, '
+                . '?::TIMESTAMPTZ, ?::TIMESTAMPTZ, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([
                     $id,
+                    // Al modificar no se mira: un enlace nace en un encabezado y
+                    // se queda en él
+                    $this->cualPiden($request),
                     // Al modificar, el padre lo decide la base (no se cambia aquí)
                     $id === null ? ($d['padre_id'] ?? null) : null,
                     $d['texto'],
@@ -532,8 +541,11 @@ class EncabezadoController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_encabezado_enlaces_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([json_encode(array_values(array_map('intval', $ids)))], $this->auditoria($request))
+                'SELECT ecommerce.fn_encabezado_enlaces_ordenar(?::BIGINT, ?::JSONB, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([$this->cualPiden($request),
+                             json_encode(array_values(array_map('intval', $ids)))],
+                            $this->auditoria($request))
             );
             return $this->responder($result);
 
@@ -603,11 +615,13 @@ class EncabezadoController extends Controller
     // PAPELERA
     // ================================================================
 
-    public function papelera()
+    /** La del encabezado que se está editando: cada uno tiene la suya. */
+    public function papelera(Request $request)
     {
         try {
-            $r = json_decode(
-                DB::selectOne('SELECT ecommerce.fn_encabezado_enlaces_papelera_listar() as result')->result, true);
+            $r = json_decode(DB::selectOne(
+                'SELECT ecommerce.fn_encabezado_enlaces_papelera_listar(?::BIGINT) as result',
+                [$this->cualPiden($request)])->result, true);
             return $this->successResponse($r['data'], $r['message']);
         } catch (Exception $e) {
             sistemaLog('error', 'Error en la papelera del encabezado', ['message' => $e->getMessage()]);
@@ -624,8 +638,11 @@ class EncabezadoController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_encabezado_enlaces_restaurar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([json_encode(array_values(array_map('intval', $ids)))], $this->auditoria($request))
+                'SELECT ecommerce.fn_encabezado_enlaces_restaurar(?::BIGINT, ?::JSONB, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([$this->cualPiden($request),
+                             json_encode(array_values(array_map('intval', $ids)))],
+                            $this->auditoria($request))
             );
             return $this->responder($result);
 
@@ -648,8 +665,9 @@ class EncabezadoController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_encabezado_enlaces_papelera_vaciar(' . self::CASTS_AUDIT . ') as result',
-                $this->auditoria($request)
+                'SELECT ecommerce.fn_encabezado_enlaces_papelera_vaciar(?::BIGINT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([$this->cualPiden($request)], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
 

@@ -50,7 +50,7 @@ class ProductoPublicoController extends Controller
      * Los parámetros que entiende el catálogo. Lo demás se ignora.
      *
      * `escaparate` es una lista de productos armada a mano en el CRM
-     * (ecommerce.producto_secciones): con él, el catálogo busca SÓLO dentro de
+     * (ecommerce.grupos_productos): con él, el catálogo busca SÓLO dentro de
      * esa lista y en el orden que se le dio allá. Es lo que piden los
      * escaparates paginados del inicio —/motos, /tecnologia— desde el
      * 09/11/2026: antes se traían sus productos enteros dentro de la página y

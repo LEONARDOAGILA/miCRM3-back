@@ -34,7 +34,7 @@ use App\Http\Resources\ApiResponder;
  *
  * LAS SECCIONES DE PRODUCTOS van todas con la clave `productos` y su `id`: la
  * tienda conmuta por la clave para saber qué pieza pintar, y una clave distinta
- * por sección la obligaría a adivinar. Lo que cambia entre ellas es CUÁNTOS
+ * por grupo la obligaría a adivinar. Lo que cambia entre ellas es CUÁNTOS
  * productos viajan:
  *
  *   · las DE FILA —izquierda, derecha, cartel, sola— viajan enteras: son tres,
@@ -157,13 +157,13 @@ class InicioPublicoController extends Controller
                     return $c;
                 }, $s['categorias']);
             }
-            // Las secciones de productos: de la base viene el nombre
+            // Las grupos de productos: de la base viene el nombre
             // del fichero de cada foto, y la carpeta es la del
             // catálogo.
             if (isset($s['productos']) && is_array($s['productos'])) {
                 $s['productos'] = array_map(fn ($p) => $this->conUrlDeProducto($p), $s['productos']);
             }
-            // La imagen de AL LADO de una sección de productos. La
+            // La imagen de AL LADO de una grupo de productos. La
             // base ya resolvió si va o no —sin fichero, `lado` sale
             // 'sola'—, así que aquí sólo se le pone la dirección.
             if (isset($s['imagen']) && is_array($s['imagen'])) {
@@ -195,7 +195,7 @@ class InicioPublicoController extends Controller
      * Las fotos de una tarjeta de producto.
      *
      * ES LA MISMA TARJETA QUE MANDA EL CATÁLOGO, venga de un escaparate de fila
-     * (fn_producto_seccion_publica) o de la primera página de uno paginado
+     * (fn_grupo_productos_publico) o de la primera página de uno paginado
      * (fn_tienda_productos): las mismas claves y la misma conversión en la
      * tienda. Lo único que cambia es cuántas fotos trae —el de fila manda las
      * dos que pinta la tarjeta; el catálogo, la galería entera, que de ahí sale

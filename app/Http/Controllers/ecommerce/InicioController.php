@@ -32,8 +32,8 @@ use App\Http\Resources\ApiResponder;
  *   · Las CINCO DE FÁBRICA existen porque la tienda sabe pintarlas. Una clave
  *     nueva sin código que la pinte sería un hueco invisible, y una borrada
  *     dejaría a la tienda pidiendo algo que ya no está.
- *   · Las de PRODUCTOS son los escaparates de «Productos por sección»: se
- *     crean y se borran allí —ProductoSeccionController—, y su fila en la
+ *   · Las de PRODUCTOS son los escaparates de «Grupos de productos»: se
+ *     crean y se borran allí —GrupoProductosController—, y su fila en la
  *     portada va y viene con ellas. Aquí se administran como las otras.
  *
  * `allInicio` las devuelve juntas, en su orden, con `fija` diciendo de cuál
@@ -81,7 +81,7 @@ use App\Http\Resources\ApiResponder;
  *                                                     alcance?, activo?, desde?, hasta? }
  *   POST ecommerce/inicio/activarSeccion/{id}       { activo? }; sin ella, alterna
  *   POST ecommerce/inicio/altoSeccion/{id}          { alto }; sólo el alto
- *   POST ecommerce/inicio/imagenSeccion/{id}        multipart: imagen; la de al lado de una sección de productos
+ *   POST ecommerce/inicio/imagenSeccion/{id}        multipart: imagen; la de al lado de una grupo de productos
  *   DELETE ecommerce/inicio/imagenSeccion/{id}      la quita
  *   POST ecommerce/inicio/ordenarSecciones          { ids: [...], cuerpo_id? }
  *
@@ -291,7 +291,7 @@ class InicioController extends Controller
                 array_merge([(int) $id, json_encode($d)], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Sección de un cuerpo guardada', ['seccion' => (int) $id]);
+            sistemaLog('info', 'Sección de un cuerpo guardada', ['grupo' => (int) $id]);
             return $this->responder($result);
         });
     }
@@ -342,7 +342,7 @@ class InicioController extends Controller
     }
 
     /**
-     * Sube (o reemplaza) la imagen de al lado de una sección de productos.
+     * Sube (o reemplaza) la imagen de al lado de una grupo de productos.
      *
      * VA POR SU PROPIA PUERTA, no con `editSeccion`: aquélla escribe todos sus
      * campos vengan o no, así que guardar el rótulo borraría la imagen.
@@ -425,7 +425,7 @@ class InicioController extends Controller
      * una galería de imágenes con su sitio en la página, y la tienda ya sabe
      * pintarlo. Las demás clases de sección siguen sin crearse por esta
      * puerta —las de fábrica porque nacen con el cuerpo, las de productos
-     * porque se arman en «Productos por sección»—.
+     * porque se arman en «Grupos de productos»—.
      *
      * Nace APAGADO y sin imágenes: se enciende cuando tenga algo que enseñar.
      */
@@ -492,13 +492,13 @@ class InicioController extends Controller
                 array_merge([(int) $id], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Banner de la portada borrado', ['seccion' => (int) $id]);
+            sistemaLog('info', 'Banner de la portada borrado', ['grupo' => (int) $id]);
             return $this->responder($result);
         });
     }
 
     /**
-     * Los escaparates de «Productos por sección» que este cuerpo NO enseña.
+     * Los escaparates de «Grupos de productos» que este cuerpo NO enseña.
      *
      * Con cuántos productos tiene cada uno y en cuántas páginas sale ya: uno
      * vacío se puede añadir, pero la tienda se lo salta, y saberlo antes evita
@@ -529,7 +529,7 @@ class InicioController extends Controller
             $d = $this->datosDe($request);
 
             $validator = Validator::make($d, [
-                'seccion_id' => 'required|integer',
+                'grupo_id'  => 'required|integer',
                 'cuerpo_id'  => 'nullable|integer',
             ]);
             if ($validator->fails()) {
@@ -540,11 +540,11 @@ class InicioController extends Controller
                 'SELECT ecommerce.fn_inicio_escaparate_poner(?::BIGINT, ?::BIGINT, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([isset($d['cuerpo_id']) ? (int) $d['cuerpo_id'] : null,
-                             (int) $d['seccion_id']], $this->auditoria($request))
+                             (int) $d['grupo_id']], $this->auditoria($request))
             );
 
             sistemaLog('info', 'Escaparate añadido a un cuerpo',
-                       ['seccion' => (int) $d['seccion_id'], 'cuerpo' => $d['cuerpo_id'] ?? null]);
+                       ['grupo' => (int) $d['grupo_id'], 'cuerpo' => $d['cuerpo_id'] ?? null]);
             return $this->responder($result);
         });
     }
@@ -552,7 +552,7 @@ class InicioController extends Controller
     /**
      * Lo quita de ESTA página. No borra el escaparate.
      *
-     * Sus productos siguen en «Productos por sección» y se puede volver a
+     * Sus productos siguen en «Grupos de productos» y se puede volver a
      * poner; lo que se va es la fila, con el rótulo y los colores que eran de
      * esta página.
      */
@@ -565,7 +565,7 @@ class InicioController extends Controller
                 array_merge([(int) $id], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Escaparate quitado de un cuerpo', ['seccion' => (int) $id]);
+            sistemaLog('info', 'Escaparate quitado de un cuerpo', ['grupo' => (int) $id]);
             return $this->responder($result);
         });
     }

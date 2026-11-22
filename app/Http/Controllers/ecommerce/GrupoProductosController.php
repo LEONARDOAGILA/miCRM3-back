@@ -43,25 +43,25 @@ use App\Http\Resources\ApiResponder;
  * «agregar todo lo que se ve» es verdad por construcción, y no hay que
  * mandar trescientos ids por la red.
  *
- *   GET    ecommerce/productoSeccion/allSecciones
- *   POST   ecommerce/productoSeccion/addSeccion            { nombre, desde?, hasta? }
- *   POST   ecommerce/productoSeccion/editSeccion/{id}      { nombre, desde?, hasta? }
- *   POST   ecommerce/productoSeccion/activarSeccion/{id}   { activo? }; sin ella, alterna
- *   POST   ecommerce/productoSeccion/ordenarSecciones      { ids: [...] }
- *   DELETE ecommerce/productoSeccion/deleteSeccion/{id}
+ *   GET    ecommerce/grupoProductos/allGrupos
+ *   POST   ecommerce/grupoProductos/addGrupo            { nombre, desde?, hasta? }
+ *   POST   ecommerce/grupoProductos/editGrupo/{id}      { nombre, desde?, hasta? }
+ *   POST   ecommerce/grupoProductos/activarGrupo/{id}   { activo? }; sin ella, alterna
+ *   POST   ecommerce/grupoProductos/ordenarGrupos      { ids: [...] }
+ *   DELETE ecommerce/grupoProductos/deleteGrupo/{id}
  *
- *   GET    ecommerce/productoSeccion/papeleraSecciones
- *   POST   ecommerce/productoSeccion/restaurarSeccion/{id}
+ *   GET    ecommerce/grupoProductos/papeleraGrupos
+ *   POST   ecommerce/grupoProductos/restaurarGrupo/{id}
  *
- *   GET    ecommerce/productoSeccion/productos/{id}        las fichas completas
- *   GET    ecommerce/productoSeccion/ids/{id}              sólo los ids, para marcar la rejilla
- *   POST   ecommerce/productoSeccion/agregar/{id}          { producto_ids: [...] }
- *   POST   ecommerce/productoSeccion/quitar/{id}           { producto_ids: [...] }
- *   POST   ecommerce/productoSeccion/ordenar/{id}          { producto_ids: [...] }
- *   POST   ecommerce/productoSeccion/agregarFiltro/{id}    { search?, marca_ids?, categoria_ids?,
+ *   GET    ecommerce/grupoProductos/productos/{id}        las fichas completas
+ *   GET    ecommerce/grupoProductos/ids/{id}              sólo los ids, para marcar la rejilla
+ *   POST   ecommerce/grupoProductos/agregar/{id}          { producto_ids: [...] }
+ *   POST   ecommerce/grupoProductos/quitar/{id}           { producto_ids: [...] }
+ *   POST   ecommerce/grupoProductos/ordenar/{id}          { producto_ids: [...] }
+ *   POST   ecommerce/grupoProductos/agregarFiltro/{id}    { search?, marca_ids?, categoria_ids?,
  *                                                            filtros?, precio_min?… }
  */
-class ProductoSeccionController extends Controller
+class GrupoProductosController extends Controller
 {
     use ApiResponder;
 
@@ -129,7 +129,7 @@ class ProductoSeccionController extends Controller
         // guardó.
         InicioPublicoController::limpiar();
 
-        return $this->successResponse($r['data'] ?? null, $r['message'] ?? 'Secciones de productos');
+        return $this->successResponse($r['data'] ?? null, $r['message'] ?? 'Grupos de productos');
     }
 
     private function ejecutar(callable $accion)
@@ -140,7 +140,7 @@ class ProductoSeccionController extends Controller
             [$m, $c] = $this->traducirErrorPostgres($e);
             return $this->errorResponse($m, $c);
         } catch (Exception $e) {
-            sistemaLog('error', 'Error en las secciones de productos', ['message' => $e->getMessage()]);
+            sistemaLog('error', 'Error en las grupos de productos', ['message' => $e->getMessage()]);
             return $this->errorResponse($e->getMessage(), 500);
         }
     }
@@ -178,16 +178,16 @@ class ProductoSeccionController extends Controller
     // LAS SECCIONES
     // ================================================================
 
-    public function allSecciones()
+    public function allGrupos()
     {
         return $this->ejecutar(function () {
             $r = json_decode(
-                DB::selectOne('SELECT ecommerce.fn_producto_secciones_listar() as result')->result, true);
+                DB::selectOne('SELECT ecommerce.fn_grupos_productos_listar() as result')->result, true);
             return $this->successResponse($r['data'], $r['message']);
         });
     }
 
-    public function addSeccion(Request $request)
+    public function addGrupo(Request $request)
     {
         return $this->ejecutar(function () use ($request) {
             $d = $this->datosDe($request);
@@ -202,19 +202,19 @@ class ProductoSeccionController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_secciones_crear(?::VARCHAR, ?::TIMESTAMPTZ, ?::TIMESTAMPTZ, '
+                'SELECT ecommerce.fn_grupos_productos_crear(?::VARCHAR, ?::TIMESTAMPTZ, ?::TIMESTAMPTZ, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge(
                     [(string) $d['nombre'], $this->fecha($d, 'desde'), $this->fecha($d, 'hasta')],
                     $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Sección de productos creada', ['nombre' => (string) $d['nombre']]);
+            sistemaLog('info', 'Grupo de productos creada', ['nombre' => (string) $d['nombre']]);
             return $this->responder($result);
         });
     }
 
-    public function editSeccion(Request $request, $id)
+    public function editGrupo(Request $request, $id)
     {
         return $this->ejecutar(function () use ($request, $id) {
             $d = $this->datosDe($request);
@@ -229,7 +229,7 @@ class ProductoSeccionController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_secciones_modificar(?::BIGINT, ?::VARCHAR, '
+                'SELECT ecommerce.fn_grupos_productos_modificar(?::BIGINT, ?::VARCHAR, '
                 . '?::TIMESTAMPTZ, ?::TIMESTAMPTZ, ' . self::CASTS_AUDIT . ') as result',
                 array_merge(
                     [(int) $id, (string) $d['nombre'], $this->fecha($d, 'desde'), $this->fecha($d, 'hasta')],
@@ -239,7 +239,7 @@ class ProductoSeccionController extends Controller
         });
     }
 
-    public function activarSeccion(Request $request, $id)
+    public function activarGrupo(Request $request, $id)
     {
         return $this->ejecutar(function () use ($request, $id) {
             $d = $this->datosDe($request);
@@ -249,7 +249,7 @@ class ProductoSeccionController extends Controller
                 ? filter_var($d['activo'], FILTER_VALIDATE_BOOLEAN) : null;
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_secciones_activar(?::BIGINT, ?::BOOLEAN, '
+                'SELECT ecommerce.fn_grupos_productos_activar(?::BIGINT, ?::BOOLEAN, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, $activo], $this->auditoria($request))
             );
@@ -257,47 +257,47 @@ class ProductoSeccionController extends Controller
         });
     }
 
-    public function ordenarSecciones(Request $request)
+    public function ordenarGrupos(Request $request)
     {
         return $this->ejecutar(function () use ($request) {
             [$ids, $error] = $this->idsDe($this->datosDe($request), 'ids');
             if ($error) { return $this->errorResponse($error, 422); }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_secciones_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT ecommerce.fn_grupos_productos_ordenar(?::JSONB, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([$ids], $this->auditoria($request))
             );
             return $this->responder($result);
         });
     }
 
-    public function deleteSeccion(Request $request, $id)
+    public function deleteGrupo(Request $request, $id)
     {
         return $this->ejecutar(function () use ($request, $id) {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_secciones_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT ecommerce.fn_grupos_productos_eliminar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Sección de productos a la papelera', ['seccion' => (int) $id]);
+            sistemaLog('info', 'Grupo de productos a la papelera', ['grupo' => (int) $id]);
             return $this->responder($result);
         });
     }
 
-    public function papeleraSecciones()
+    public function papeleraGrupos()
     {
         return $this->ejecutar(function () {
             $r = json_decode(
-                DB::selectOne('SELECT ecommerce.fn_producto_secciones_papelera_listar() as result')->result, true);
+                DB::selectOne('SELECT ecommerce.fn_grupos_productos_papelera_listar() as result')->result, true);
             return $this->successResponse($r['data'], $r['message']);
         });
     }
 
-    public function restaurarSeccion(Request $request, $id)
+    public function restaurarGrupo(Request $request, $id)
     {
         return $this->ejecutar(function () use ($request, $id) {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_secciones_restaurar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
+                'SELECT ecommerce.fn_grupos_productos_restaurar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id], $this->auditoria($request))
             );
             return $this->responder($result);
@@ -312,7 +312,7 @@ class ProductoSeccionController extends Controller
     {
         return $this->ejecutar(function () use ($id) {
             $r = json_decode(DB::selectOne(
-                'SELECT ecommerce.fn_producto_seccion_productos(?::BIGINT) as result',
+                'SELECT ecommerce.fn_grupo_productos_contenido(?::BIGINT) as result',
                 [(int) $id])->result, true);
             return $this->successResponse($r['data'], $r['message']);
         });
@@ -322,7 +322,7 @@ class ProductoSeccionController extends Controller
     {
         return $this->ejecutar(function () use ($id) {
             $r = json_decode(DB::selectOne(
-                'SELECT ecommerce.fn_producto_seccion_ids(?::BIGINT) as result',
+                'SELECT ecommerce.fn_grupo_productos_ids(?::BIGINT) as result',
                 [(int) $id])->result, true);
             return $this->successResponse($r['data'], $r['message']);
         });
@@ -335,7 +335,7 @@ class ProductoSeccionController extends Controller
             if ($error) { return $this->errorResponse($error, 422); }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_seccion_agregar(?::BIGINT, ?::JSONB, '
+                'SELECT ecommerce.fn_grupo_productos_agregar(?::BIGINT, ?::JSONB, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, $ids], $this->auditoria($request))
             );
@@ -350,7 +350,7 @@ class ProductoSeccionController extends Controller
             if ($error) { return $this->errorResponse($error, 422); }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_seccion_quitar(?::BIGINT, ?::JSONB, '
+                'SELECT ecommerce.fn_grupo_productos_quitar(?::BIGINT, ?::JSONB, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, $ids], $this->auditoria($request))
             );
@@ -365,7 +365,7 @@ class ProductoSeccionController extends Controller
             if ($error) { return $this->errorResponse($error, 422); }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_seccion_ordenar(?::BIGINT, ?::JSONB, '
+                'SELECT ecommerce.fn_grupo_productos_ordenar(?::BIGINT, ?::JSONB, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, $ids], $this->auditoria($request))
             );
@@ -413,13 +413,13 @@ class ProductoSeccionController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_producto_seccion_agregar_filtro(?::BIGINT, ?::JSONB, '
+                'SELECT ecommerce.fn_grupo_productos_agregar_filtro(?::BIGINT, ?::JSONB, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id, json_encode($filtro)], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Asignación masiva a una sección de productos',
-                       ['seccion' => (int) $id, 'filtro' => $filtro]);
+            sistemaLog('info', 'Asignación masiva a una grupo de productos',
+                       ['grupo' => (int) $id, 'filtro' => $filtro]);
             return $this->responder($result);
         });
     }
