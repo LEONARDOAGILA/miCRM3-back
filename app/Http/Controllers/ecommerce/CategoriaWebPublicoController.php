@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiResponder;
+use App\Http\Controllers\Concerns\ImagenesDelEcommerce;
 
 /**
  * El MENÚ DE CATEGORÍAS que pinta la tienda. SIN TOKEN.
@@ -30,6 +31,9 @@ use App\Http\Resources\ApiResponder;
 class CategoriaWebPublicoController extends Controller
 {
     use ApiResponder;
+    // Para armar la dirección del banner de cada categoría: la base manda el
+    // nombre del fichero y aquí se sabe dónde está servida la carpeta
+    use ImagenesDelEcommerce;
 
     public const CACHE_CLAVE = 'ecommerce.categorias.menu';
     private const MINUTOS = 10;
@@ -39,12 +43,43 @@ class CategoriaWebPublicoController extends Controller
         Cache::forget(self::CACHE_CLAVE);
     }
 
+    /**
+     * EL BANNER DE CADA CATEGORÍA, con su dirección entera.
+     *
+     * La base manda sólo el nombre del fichero, como con todas las demás
+     * imágenes; la dirección la arma aquí el servidor, que es quien sabe
+     * dónde está servida la carpeta.
+     *
+     * SE RECORRE EL ÁRBOL ENTERO y no sólo el primer nivel: el banner es de
+     * la categoría que se esté mirando, y lo normal es que esa sea una hija
+     * o una nieta.
+     */
+    private function conBanner(array $nodos): array
+    {
+        return array_map(function ($n) {
+            // EL BANNER SON VARIOS: los que estén en fecha se turnan, y con
+            // ellos viene cada cuántos segundos cambian. Lo que la base manda
+            // de cada uno es el nombre del fichero.
+            if (isset($n['banner']['imagenes']) && is_array($n['banner']['imagenes'])) {
+                $n['banner']['imagenes'] = array_map(function ($i) {
+                    $i['imagen'] = $this->urlImagenEcommerce($i['imagen'] ?? null);
+                    return $i;
+                }, $n['banner']['imagenes']);
+            } else {
+                $n['banner'] = null;
+            }
+
+            $n['hijos'] = $this->conBanner($n['hijos'] ?? []);
+            return $n;
+        }, $nodos);
+    }
+
     public function menu()
     {
         try {
             $data = Cache::remember(self::CACHE_CLAVE, now()->addMinutes(self::MINUTOS), function () {
                 $fila = DB::selectOne('SELECT ecommerce.fn_categorias_web_menu_publico() as result');
-                return json_decode($fila->result, true) ?: [];
+                return $this->conBanner(json_decode($fila->result, true) ?: []);
             });
 
             return $this->successResponse($data, 'Categorías')

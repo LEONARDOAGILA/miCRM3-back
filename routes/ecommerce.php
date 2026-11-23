@@ -173,6 +173,10 @@ Route::group([
 
     // Las imágenes de cada categoría, programadas por fechas. El fichero sube
     // en multipart y acaba en storage/app/public/img/ecommerce.
+    //
+    // SON DOS LISTAS EN LAS MISMAS RUTAS, y las separa `?tipo=banner`:
+    // «imagen» (lo que no diga nada) es el círculo de la portada, y «banner»
+    // la tira ancha de /shop de esa categoría.
     Route::get('imagenesCuentas',          [CategoriaWebController::class, 'imagenesCuentas']);
     Route::get('imagenes/{categoria}',     [CategoriaWebController::class, 'imagenes'])->whereNumber('categoria');
     Route::post('addImagen/{categoria}',   [CategoriaWebController::class, 'addImagen'])->whereNumber('categoria');
@@ -246,12 +250,12 @@ Route::group([
     Route::delete('deleteBanner/{id}',     [InicioController::class, 'deleteBanner'])
          ->whereNumber('id');
 
-    // Los escaparates de «Grupos de productos» se pueden enseñar en VARIAS
+    // Las secciones de productos de «Grupos de productos» se pueden enseñar en VARIAS
     // páginas: aquí se añade uno a ésta y se quita de ésta. Quitarlo no lo
     // borra; sus productos siguen en su pantalla.
-    Route::get('escaparatesDisponibles',   [InicioController::class, 'escaparatesDisponibles']); // ?cuerpo_id=
-    Route::post('addEscaparate',           [InicioController::class, 'addEscaparate']);  // { grupo_id, cuerpo_id? }
-    Route::delete('quitarEscaparate/{id}', [InicioController::class, 'quitarEscaparate'])
+    Route::get('seccionesProductosDisponibles',   [InicioController::class, 'seccionesProductosDisponibles']); // ?cuerpo_id=
+    Route::post('addSeccionProductos',           [InicioController::class, 'addSeccionProductos']);  // { grupo_id, cuerpo_id? }
+    Route::delete('quitarSeccionProductos/{id}', [InicioController::class, 'quitarSeccionProductos'])
          ->whereNumber('id');
 
     Route::post('ordenarSecciones',        [InicioController::class, 'ordenarSecciones']);  // { ids: [...], cuerpo_id? }
@@ -439,7 +443,7 @@ Route::group([
 // ----------------------------------------------------------------------------
 // SECCIONES DE PRODUCTOS (administración)
 // ----------------------------------------------------------------------------
-// Escaparates armados a mano: «Los más vendidos», «Ofertas de navidad». La
+// Secciones de productos armados a mano: «Los más vendidos», «Ofertas de navidad». La
 // sección sólo tiene nombre, orden y vigencia; lo que lleva dentro va en el
 // cruce, y entra de uno en uno o de golpe por filtro.
 //

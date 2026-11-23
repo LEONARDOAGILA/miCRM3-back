@@ -79,10 +79,10 @@ class CuerpoController extends Controller
         'descripcion'  => 'nullable|string|max:4000',
         'catalogo'     => 'nullable|boolean',
         'activo'       => 'nullable|boolean',
-        // CON QUÉ ESCAPARATE NACE, al crearla. Sólo se mira al crear: en una
-        // página que ya existe los escaparates se ponen y se quitan en su
+        // CON QUÉ SECCIÓN DE PRODUCTOS NACE, al crearla. Sólo se mira al crear: en una
+        // página que ya existe las secciones de productos se ponen y se quitan en su
         // editor. Si no existe, la página tampoco se crea: lo dice la base.
-        'escaparate_id' => 'nullable|integer',
+        'seccion_productos_id' => 'nullable|integer',
     ];
 
     public function __construct()

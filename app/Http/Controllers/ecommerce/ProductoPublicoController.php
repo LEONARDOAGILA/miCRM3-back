@@ -49,16 +49,16 @@ class ProductoPublicoController extends Controller
     /**
      * Los parámetros que entiende el catálogo. Lo demás se ignora.
      *
-     * `escaparate` es una lista de productos armada a mano en el CRM
+     * `sección` es una lista de productos armada a mano en el CRM
      * (ecommerce.grupos_productos): con él, el catálogo busca SÓLO dentro de
      * esa lista y en el orden que se le dio allá. Es lo que piden los
-     * escaparates paginados del inicio —/motos, /tecnologia— desde el
+     * secciones de productos paginados del inicio —/motos, /tecnologia— desde el
      * 09/11/2026: antes se traían sus productos enteros dentro de la página y
      * los paginaba el navegador.
      */
     private const FILTROS = [
         'search', 'categoria', 'marca', 'sort', 'price_min', 'price_max',
-        'page', 'per_page', 'motos', 'escaparate',
+        'page', 'per_page', 'motos', 'seccion_productos',
     ];
 
     /**

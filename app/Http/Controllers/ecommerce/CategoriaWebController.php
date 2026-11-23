@@ -128,7 +128,7 @@ class CategoriaWebController extends Controller
 
             $result = DB::selectOne(
                 'SELECT ecommerce.fn_categorias_web_guardar(?::BIGINT, ?::BOOLEAN, ?::VARCHAR, '
-                . self::CASTS_AUDIT . ', ?::BOOLEAN, ?::BOOLEAN) as result',
+                . self::CASTS_AUDIT . ', ?::BOOLEAN, ?::BOOLEAN, ?::SMALLINT) as result',
                 array_merge([
                     (int) $id,
                     array_key_exists('oculta', $d) ? (bool) $d['oculta'] : false,
@@ -137,6 +137,12 @@ class CategoriaWebController extends Controller
                 ], $this->auditoria($request), [
                     $marca($d, 'destacada'),
                     $marca($d, 'promocion'),
+                    // CADA CUÁNTOS SEGUNDOS CAMBIA SU BANNER. Igual que las dos
+                    // marcas: sin el campo, la función se queda con lo que había.
+                    // CON EL CAMPO VACÍO MANDA UN 0, que es como se vacían: un
+                    // nulo sería «no dije nada» y se quedarían los de antes.
+                    array_key_exists('banner_segundos', $d)
+                        ? (int) $d['banner_segundos'] : null,
                 ])
             );
             $r = json_decode($result->result, true);
@@ -298,6 +304,18 @@ class CategoriaWebController extends Controller
         return $this->successResponse($this->conUrl($r['data'] ?? null), $r['message'] ?? 'Imágenes');
     }
 
+    /**
+     * QUÉ LISTA PIDEN: la de siempre o la de los banners.
+     *
+     * Las dos viven en la misma tabla y se piden por las mismas rutas, con
+     * `?tipo=banner`. Lo que no venga, o venga mal, es la de siempre: así
+     * una llamada vieja —o un enlace guardado— sigue trayendo lo de antes.
+     */
+    private function tipoDeLista(Request $request): string
+    {
+        return $request->input('tipo') === 'banner' ? 'banner' : 'imagen';
+    }
+
     /** Cuántas imágenes tiene cada categoría: es la chapita del árbol. */
     public function imagenesCuentas()
     {
@@ -308,12 +326,14 @@ class CategoriaWebController extends Controller
         });
     }
 
-    public function imagenes($categoria)
+    public function imagenes(Request $request, $categoria)
     {
-        return $this->ejecutar(function () use ($categoria) {
+        $tipo = $this->tipoDeLista($request);
+
+        return $this->ejecutar(function () use ($categoria, $tipo) {
             $r = json_decode(DB::selectOne(
-                'SELECT ecommerce.fn_categorias_imagenes_listar(?::BIGINT) as result',
-                [(int) $categoria])->result, true);
+                'SELECT ecommerce.fn_categorias_imagenes_listar(?::BIGINT, ?::TEXT) as result',
+                [(int) $categoria, $tipo])->result, true);
 
             return $this->successResponse($this->conUrl($r['data'] ?? null), $r['message']);
         });
@@ -380,6 +400,13 @@ class CategoriaWebController extends Controller
                 'desde'  => $request->input('desde'),
                 'hasta'  => $request->input('hasta'),
                 'activo' => filter_var($request->input('activo', true), FILTER_VALIDATE_BOOLEAN),
+                // SÓLO CUENTA AL CREAR: la base no deja que una imagen se
+                // pase a banner por el camino, y al revés tampoco
+                'tipo'   => $this->tipoDeLista($request),
+                // A DÓNDE LLEVA EL BANNER al pulsarlo. La base lo guarda sólo
+                // si la fila es un banner; en una imagen de círculo lo deja en
+                // nulo, porque ésa ya lleva a su categoría.
+                'enlace' => $request->input('enlace'),
             ];
 
             try {
@@ -457,12 +484,14 @@ class CategoriaWebController extends Controller
         });
     }
 
-    public function papeleraImagenes($categoria)
+    public function papeleraImagenes(Request $request, $categoria)
     {
-        return $this->ejecutar(function () use ($categoria) {
+        $tipo = $this->tipoDeLista($request);
+
+        return $this->ejecutar(function () use ($categoria, $tipo) {
             $r = json_decode(DB::selectOne(
-                'SELECT ecommerce.fn_categorias_imagenes_papelera(?::BIGINT) as result',
-                [(int) $categoria])->result, true);
+                'SELECT ecommerce.fn_categorias_imagenes_papelera(?::BIGINT, ?::TEXT) as result',
+                [(int) $categoria, $tipo])->result, true);
 
             $data = array_map(function ($i) {
                 $i['imagen_url'] = $this->urlImagenEcommerce($i['imagen'] ?? null);
@@ -499,10 +528,13 @@ class CategoriaWebController extends Controller
      */
     public function vaciarImagenes(Request $request, $categoria)
     {
-        return $this->ejecutar(function () use ($request, $categoria) {
+        $tipo = $this->tipoDeLista($request);
+
+        return $this->ejecutar(function () use ($request, $categoria, $tipo) {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_categorias_imagenes_vaciar(?::BIGINT, ' . self::CASTS_AUDIT . ') as result',
-                array_merge([(int) $categoria], $this->auditoria($request))
+                'SELECT ecommerce.fn_categorias_imagenes_vaciar(?::BIGINT, ?::TEXT, '
+                . self::CASTS_AUDIT . ') as result',
+                array_merge([(int) $categoria, $tipo], $this->auditoria($request))
             );
             $r = json_decode($result->result, true);
 

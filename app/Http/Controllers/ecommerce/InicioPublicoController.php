@@ -44,7 +44,7 @@ use App\Http\Resources\ApiResponder;
  *     y hasta el 09/11/2026 también viajaban enteras: /tecnologia mandaba sus
  *     noventa y un productos con la ficha de cada uno —63 KB— para pintar doce
  *     tarjetas. Las demás páginas y lo que se marque en los filtros los pide la
- *     tienda a `publico/productos?escaparate=…`.
+ *     tienda a `publico/productos?sección=…`.
  *
  * LA PRIMERA PÁGINA VIAJA CON LA PÁGINA a propósito, y SIN FILTROS: es lo que
  * se ve al entrar, y pedirla aparte dejaría /motos con su encabezado y un hueco
@@ -194,7 +194,7 @@ class InicioPublicoController extends Controller
     /**
      * Las fotos de una tarjeta de producto.
      *
-     * ES LA MISMA TARJETA QUE MANDA EL CATÁLOGO, venga de un escaparate de fila
+     * ES LA MISMA TARJETA QUE MANDA EL CATÁLOGO, venga de una sección de productos de fila
      * (fn_grupo_productos_publico) o de la primera página de uno paginado
      * (fn_tienda_productos): las mismas claves y la misma conversión en la
      * tienda. Lo único que cambia es cuántas fotos trae —el de fila manda las

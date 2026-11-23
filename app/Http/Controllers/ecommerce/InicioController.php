@@ -32,7 +32,7 @@ use App\Http\Resources\ApiResponder;
  *   · Las CINCO DE FÁBRICA existen porque la tienda sabe pintarlas. Una clave
  *     nueva sin código que la pinte sería un hueco invisible, y una borrada
  *     dejaría a la tienda pidiendo algo que ya no está.
- *   · Las de PRODUCTOS son los escaparates de «Grupos de productos»: se
+ *   · Las de PRODUCTOS son las secciones de productos de «Grupos de productos»: se
  *     crean y se borran allí —GrupoProductosController—, y su fila en la
  *     portada va y viene con ellas. Aquí se administran como las otras.
  *
@@ -498,32 +498,32 @@ class InicioController extends Controller
     }
 
     /**
-     * Los escaparates de «Grupos de productos» que este cuerpo NO enseña.
+     * Las secciones de productos de «Grupos de productos» que este cuerpo NO enseña.
      *
      * Con cuántos productos tiene cada uno y en cuántas páginas sale ya: uno
      * vacío se puede añadir, pero la tienda se lo salta, y saberlo antes evita
      * poner una sección que no se va a ver.
      */
-    public function escaparatesDisponibles(Request $request)
+    public function seccionesProductosDisponibles(Request $request)
     {
         return $this->ejecutar(function () use ($request) {
             $cuerpo = $request->filled('cuerpo_id') ? (int) $request->input('cuerpo_id') : null;
 
             $r = json_decode(DB::selectOne(
-                'SELECT ecommerce.fn_inicio_escaparates_disponibles(?::BIGINT) as result', [$cuerpo]
+                'SELECT ecommerce.fn_inicio_secciones_productos_disponibles(?::BIGINT) as result', [$cuerpo]
             )->result, true);
             return $this->successResponse($r['data'], $r['message']);
         });
     }
 
     /**
-     * Enseña un escaparate en este cuerpo, al final y encendido.
+     * Enseña una sección de productos en este cuerpo, al final y encendido.
      *
-     * EL MISMO ESCAPARATE PUEDE ESTAR EN VARIAS PÁGINAS, cada una con su
+     * LA MISMA SECCIÓN PUEDE ESTAR EN VARIAS PÁGINAS, cada una con su
      * rótulo, sus colores y su sitio: lo que se repite es la fila, no los
      * productos.
      */
-    public function addEscaparate(Request $request)
+    public function addSeccionProductos(Request $request)
     {
         return $this->ejecutar(function () use ($request) {
             $d = $this->datosDe($request);
@@ -537,35 +537,35 @@ class InicioController extends Controller
             }
 
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_escaparate_poner(?::BIGINT, ?::BIGINT, '
+                'SELECT ecommerce.fn_inicio_seccion_productos_poner(?::BIGINT, ?::BIGINT, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([isset($d['cuerpo_id']) ? (int) $d['cuerpo_id'] : null,
                              (int) $d['grupo_id']], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Escaparate añadido a un cuerpo',
+            sistemaLog('info', 'Sección añadido a un cuerpo',
                        ['grupo' => (int) $d['grupo_id'], 'cuerpo' => $d['cuerpo_id'] ?? null]);
             return $this->responder($result);
         });
     }
 
     /**
-     * Lo quita de ESTA página. No borra el escaparate.
+     * Lo quita de ESTA página. No borra la sección.
      *
      * Sus productos siguen en «Grupos de productos» y se puede volver a
      * poner; lo que se va es la fila, con el rótulo y los colores que eran de
      * esta página.
      */
-    public function quitarEscaparate(Request $request, $id)
+    public function quitarSeccionProductos(Request $request, $id)
     {
         return $this->ejecutar(function () use ($request, $id) {
             $result = DB::selectOne(
-                'SELECT ecommerce.fn_inicio_escaparate_quitar(?::BIGINT, '
+                'SELECT ecommerce.fn_inicio_seccion_productos_quitar(?::BIGINT, '
                 . self::CASTS_AUDIT . ') as result',
                 array_merge([(int) $id], $this->auditoria($request))
             );
 
-            sistemaLog('info', 'Escaparate quitado de un cuerpo', ['grupo' => (int) $id]);
+            sistemaLog('info', 'Sección quitado de un cuerpo', ['grupo' => (int) $id]);
             return $this->responder($result);
         });
     }

@@ -21,7 +21,7 @@ use App\Http\Resources\ApiResponder;
  *
  * CREAR UNA SECCIÓN NO LA PONE EN NINGUNA PÁGINA. Aquí se decide qué
  * productos van juntos; en qué páginas sale ese grupo se decide en «Cuerpos de
- * la tienda», con «Escaparate», y puede salir en varias a la vez —en la de
+ * la tienda», con «Sección», y puede salir en varias a la vez —en la de
  * entrada y en la de Movilidad— cada una con su orden, su rótulo, su alto y
  * sus fechas. Hasta el 2026-11-07 se metía sola al final de la portada, y eso
  * era tomar por adelantado una decisión que no es de esta pantalla: lo que se
@@ -123,7 +123,7 @@ class GrupoProductosController extends Controller
 
         // Lo que ve la tienda cambia con cualquiera de estas acciones, y no
         // sólo al borrar una sección: meterle un producto cambia lo que se
-        // pinta en TODAS las páginas donde salga ese escaparate, igual que
+        // pinta en TODAS las páginas donde salga esa sección, igual que
         // renombrarla. Cada página se guarda un minuto, así que sin esto se
         // quedan enseñando la lista de antes y parece que el cambio no se
         // guardó.

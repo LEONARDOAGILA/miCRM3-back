@@ -280,13 +280,13 @@ class ProductoController extends Controller
     /**
      * Tira las cachés de la tienda web.
      *
-     * HACE FALTA PORQUE LA TIENDA NO PREGUNTA CADA VEZ: los escaparates se
+     * HACE FALTA PORQUE LA TIENDA NO PREGUNTA CADA VEZ: las secciones de productos se
      * guardan 10 minutos (`ecommerce.secciones.publicas`) y las páginas 1
      * minuto. Sin esto, apagar un producto en el CRM se vería en la web
      * «cuando toque», que es lo peor que puede pasar: parece que no funcionó.
      *
      * Se llama también al crear y al editar, no sólo al apagar: la tarjeta de
-     * un escaparate enseña el nombre, la foto y los precios del producto, así
+     * una sección de productos enseña el nombre, la foto y los precios del producto, así
      * que cambiarle cualquiera de ésos deja la caché vieja igual de mal.
      *
      * NO TUMBA LA PANTALLA SI FALLA. Una caché que no se pudo limpiar es un
